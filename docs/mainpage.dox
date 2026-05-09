@@ -1,0 +1,56 @@
+/**
+ * @mainpage Relational NT
+ *
+ * @image html logo.png
+ *
+ * Relational NT is an experimental database kernel inspired by the
+ * object-management model of the Windows NT kernel. The project applies the
+ * same style of explicit object management to database state: relations,
+ * tuples, transactions, namespaces, permissions, cursors, and handles are
+ * treated as runtime-managed objects rather than isolated subsystems.
+ *
+ * The current codebase is intentionally early-stage. Most classes define the
+ * boundaries of the runtime and document the design constraints that should
+ * guide future implementation.
+ *
+ * @section architecture Architecture Direction
+ *
+ * - ObjectManager registers, locates, and references database objects.
+ * - PermissionsManager keeps security checks separate from object lookup.
+ * - IdentityManager decides whether an object supports lifecycle operations
+ *   such as open and close.
+ * - LifecycleManager models monitoring, pinning, cleanup, and contention.
+ * - HandlerManager represents authorized access through explicit handles.
+ * - CursorManager bridges durable snapshots and pull-based query execution.
+ * - VM separates terminating relational retrieval from higher-order logic
+ *   execution.
+ *
+ * @section building Building
+ *
+ * From a Visual Studio/NMake environment:
+ *
+ * @code{.sh}
+ * nmake /f Makefile windows
+ * @endcode
+ *
+ * From a Unix-like environment with Make and a C++17 compiler:
+ *
+ * @code{.sh}
+ * make unix
+ * @endcode
+ *
+ * @section docs Generating Documentation
+ *
+ * Install Doxygen and run:
+ *
+ * @code{.sh}
+ * doxygen Doxyfile
+ * @endcode
+ *
+ * The generated HTML documentation is written to docs/generated/html.
+ */
+
+/**
+ * @namespace nt
+ * @brief Contains the Relational NT runtime managers and API facade.
+ */

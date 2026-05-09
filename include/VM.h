@@ -2,45 +2,50 @@
 
 #include "Api.h"
 
+/**
+ * @file VM.h
+ * @brief Declares the logic execution boundary for relational and higher-order workloads.
+ */
+
 namespace nt
 {
-	/**
+    /**
      * @class VM
-     * @brief The first-order logic (FOL) and second-order logic (SOL) dual cores
+     * @brief Hosts the first-order logic (FOL) and second-order logic (SOL) cores.
      *
-     * This partitioning is here to ensure termination on retrieval with FOL.
-     * 1. Tarski Runtime (FOL):
-     *    A relational engine that implements Tarski's relational calculus.
-     *    It uses a deterministic Volcano-iterator model to perform relational algebra operations
-     *    (Joins, Projections, Selects, etc) directly against the Cursor Manager and a prepared plan.
+     * This partitioning exists to ensure retrieval terminates when execution is
+     * constrained to first-order logic.
      *
-     * 2. Karuta Runtime (SOL):
-     *    An isolated WAM-based environment for higher-order logic programming. It
-     *    handles recursion, choice points, and other complex programming constructs
-     *    that do not guarantee termination.
+     * - Tarski runtime (FOL): a relational engine that implements Tarski's
+     *   relational calculus. It uses a deterministic Volcano-iterator model to
+     *   perform relational algebra operations such as joins, projections, and
+     *   selects directly against the CursorManager and a prepared plan.
      *
-     * @remark Lazy Evaluation & Paging Strategy
+     * - Karuta runtime (SOL): an isolated WAM-based environment for
+     *   higher-order logic programming. It handles recursion, choice points, and
+     *   other programming constructs that do not guarantee termination.
      *
-     * Both the Tarski (First-Order) and Karuta (Second-Order) engines are
-     * strictly pull-based. Data is streamed lazily from the Cursor Manager
-     * to ensure a constant memory footprint regardless of relation size.
+     * @remark Lazy evaluation and paging strategy
      *
-     * PIPELINE DYNAMICS:
-     * 1. Demand-Driven:
-     *    The Karuta WAM only requests a fact when a goal needs satisfaction.
-     *    A request propagates down the algebra tree as a chain of Next() calls.
+     * Both the Tarski first-order engine and the Karuta second-order engine are
+     * strictly pull-based. Data is streamed lazily from the CursorManager to
+     * preserve a constant memory footprint regardless of relation size.
      *
-     * 2. Short-Circuiting:
-     *    If the Karuta engine finds a solution or hits a failure that
-     *    invalidates a branch, the Tarski iterator is discarded or reset
-     *    without ever having materialized the remaining tuples.
+     * Pipeline dynamics:
+     * - Demand-driven: the Karuta WAM requests a fact only when a goal needs
+     *   satisfaction. A request propagates down the algebra tree as a chain of
+     *   Next() calls.
      *
-     * 3. Resource Stewardship:
-     *    By maintaining laziness up to the highest logical level, we
-     *    minimize pressure on the ObjectManager and keep snapshots pinned
-     *    (via Monitor) only for the absolute minimum time required.
+     * - Short-circuiting: if the Karuta engine finds a solution or reaches a
+     *   failure that invalidates a branch, the Tarski iterator is discarded or
+     *   reset without materializing the remaining tuples.
+     *
+     * - Resource stewardship: by maintaining laziness up to the highest logical
+     *   level, the runtime minimizes pressure on ObjectManager and keeps
+     *   snapshots pinned through LifecycleManager::Monitor only for the minimum
+     *   time required.
      */
-    class NT_API WAM
+    class NT_API VM
     {
     };
 }

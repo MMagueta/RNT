@@ -1,5 +1,10 @@
 #pragma once
 
+/**
+ * @file NT.h
+ * @brief Includes for the Relational NT public API.
+ */
+
 #include "Types.h"
 #include "ObjectManager.h"
 #include "PermissionsManager.h"
@@ -8,5 +13,5 @@
 #include "IdentityManager.h"
 #include "LifecycleManager.h"
 #include "HandlerManager.h"
-#include "WAM.h"
+#include "VM.h"
 #include "Runtime.h"

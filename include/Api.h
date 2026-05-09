@@ -1,5 +1,10 @@
 #pragma once
 
+/**
+ * @file Api.h
+ * @brief Defines symbol visibility for the Relational NT public API.
+ */
+
 #if defined(_WIN32) && defined(NT_CONSOLE_APP)
 #define NT_API
 #elif defined(_WIN32) && defined(NT_EXPORTS)

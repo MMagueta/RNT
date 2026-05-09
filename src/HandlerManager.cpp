@@ -8,9 +8,10 @@ namespace nt
 {
     void HandlerManager::DeallocateHandle(struct handle* handle)
     {
+        delete handle;
     }
 
-    struct HandlerManager::handle HandlerManager::Open(std::vector<std::string> object_path, void* connection_context)
+    struct HandlerManager::handle* HandlerManager::Open(std::vector<std::string> object_path, void* connection_context)
     {
         ObjectManager objects;
         PermissionsManager permissions;
@@ -22,11 +23,11 @@ namespace nt
             && lifecycles.Contention(retrieved_object)) {
             // Starts monitoring this guy
             lifecycles.Monitor(retrieved_object);
-            return { retrieved_object, connection_context }; // Return a successful handle
+            return new handle{ retrieved_object, connection_context }; // Return a successful handle
         }
         else {
             // Return something more algebraic instead of null or an int
-            return {};
+            return nullptr;
         };
     }
 

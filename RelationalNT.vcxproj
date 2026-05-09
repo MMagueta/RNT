@@ -103,6 +103,8 @@
     <ClInclude Include="include\VM.h" />
   </ItemGroup>
   <ItemGroup>
+    <None Include="Doxyfile" />
+    <None Include="docs\mainpage.dox" />
     <None Include="Makefile" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />

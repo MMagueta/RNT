@@ -81,6 +81,12 @@
     </ClInclude>
   </ItemGroup>
   <ItemGroup>
+    <None Include="Doxyfile">
+      <Filter>Build Files</Filter>
+    </None>
+    <None Include="docs\mainpage.dox">
+      <Filter>Build Files</Filter>
+    </None>
     <None Include="Makefile">
       <Filter>Build Files</Filter>
     </None>
