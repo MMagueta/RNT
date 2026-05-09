@@ -85,10 +85,29 @@
 
   <ItemDefinitionGroup></ItemDefinitionGroup>
   <ItemGroup>
+    <ClCompile Include="src\CursorManager.cpp" />
+    <ClCompile Include="src\HandlerManager.cpp" />
+    <ClCompile Include="src\IdentityManager.cpp" />
+    <ClCompile Include="src\LifecycleManager.cpp" />
+    <ClCompile Include="src\NamespaceReferenceManager.cpp" />
     <ClCompile Include="src\NT.cpp" />
+    <ClCompile Include="src\ObjectManager.cpp" />
+    <ClCompile Include="src\PermissionsManager.cpp" />
+    <ClCompile Include="src\WAM.cpp" />
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="include\Api.h" />
+    <ClInclude Include="include\CursorManager.h" />
+    <ClInclude Include="include\HandlerManager.h" />
+    <ClInclude Include="include\IdentityManager.h" />
+    <ClInclude Include="include\LifecycleManager.h" />
+    <ClInclude Include="include\NamespaceReferenceManager.h" />
     <ClInclude Include="include\NT.h" />
+    <ClInclude Include="include\ObjectManager.h" />
+    <ClInclude Include="include\PermissionsManager.h" />
+    <ClInclude Include="include\Runtime.h" />
+    <ClInclude Include="include\Types.h" />
+    <ClInclude Include="include\WAM.h" />
   </ItemGroup>
   <ItemGroup>
     <None Include="Makefile" />

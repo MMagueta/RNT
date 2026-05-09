@@ -1,0 +1,35 @@
+#+TITLE: Relational NT
+
+#+ATTR_ORG: :width 320
+[[file:images/logo.png]]
+
+* About
+
+This is a Relational NT-inspired database kernel. The goal of the project is to offer an approach similar to how the NT kernel offers for an OS, but for administrating database objects and state.
+
+Relational NT explores database internals through an object-manager style architecture. Instead of treating relations, tuples, transactions, namespaces, permissions, and handles as unrelated mechanisms, the runtime models them as managed objects with explicit lifecycle, uniform access paths and explicit security enforcement.
+
+* Design Direction
+
+- Object management: database objects are registered, located, and referenced through a central object manager.
+- Permissions: access checks are separated from object lookup so security policy can evolve independently.
+- Identity and lifecycle: opening, closing, monitoring, and contention decisions are represented as runtime responsibilities.
+- Handles: authorized access to objects is modeled explicitly, making ownership and cleanup visible.
+
+* Current Status
+
+The project is early-stage and focused on shaping the runtime structure. Many components are intentionally skeletal while the core abstractions settle.
+
+* Building
+
+The repository includes a Visual Studio makefile project and a root =Makefile=. On Windows, build with the Visual Studio/NMake environment available:
+
+#+begin_src shell
+nmake /f Makefile windows
+#+end_src
+
+For Unix-like environments with a C++17 compiler and Make installed:
+
+#+begin_src shell
+make unix
+#+end_src

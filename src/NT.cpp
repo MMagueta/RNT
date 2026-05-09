@@ -1,4 +1,4 @@
-#include "NT.h"
+#include "Runtime.h"
 
 #ifdef NT_CONSOLE_APP
 #include <iostream>
@@ -9,6 +9,10 @@ namespace nt
     bool NT::IsRunning() const
     {
         return true;
+    }
+
+    void NT::SimulateEntryCall()
+    {
     }
 }
 
