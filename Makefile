@@ -1,6 +1,6 @@
 CXX = cl
 TARGET = RNT.exe
-OBJECTS = NT.obj ObjectManager.obj PermissionsManager.obj NamespaceReferenceManager.obj CursorManager.obj IdentityManager.obj LifecycleManager.obj HandlerManager.obj WAM.obj
+OBJECTS = NT.obj ObjectManager.obj PermissionsManager.obj NamespaceReferenceManager.obj CursorManager.obj IdentityManager.obj LifecycleManager.obj HandlerManager.obj VM.obj
 INCDIR = include
 DEFINES = /DNT_CONSOLE_APP /DNT_WAIT_ON_EXIT
 INCLUDE_FLAG = /I$(INCDIR)
@@ -15,12 +15,12 @@ all: $(TARGET)
 windows: all
 
 unix:
-	$(MAKE) CXX=c++ TARGET=RNT OBJECTS="NT.o ObjectManager.o PermissionsManager.o NamespaceReferenceManager.o CursorManager.o IdentityManager.o LifecycleManager.o HandlerManager.o WAM.o" DEFINES=-DNT_CONSOLE_APP INCLUDE_FLAG=-Iinclude COMPILE_FLAGS="-std=c++17 -Wall -Wextra" COMPILE_ONLY=-c LINK_FLAGS= TARGET_OUT="-o RNT" REMOVE="rm -f" all
+	$(MAKE) CXX=c++ TARGET=RNT OBJECTS="NT.o ObjectManager.o PermissionsManager.o NamespaceReferenceManager.o CursorManager.o IdentityManager.o LifecycleManager.o HandlerManager.o VM.o" DEFINES=-DNT_CONSOLE_APP INCLUDE_FLAG=-Iinclude COMPILE_FLAGS="-std=c++17 -Wall -Wextra" COMPILE_ONLY=-c LINK_FLAGS= TARGET_OUT="-o RNT" REMOVE="rm -f" all
 
 linux: unix
 
 macos:
-	$(MAKE) CXX=c++ TARGET=RNT OBJECTS="NT.o ObjectManager.o PermissionsManager.o NamespaceReferenceManager.o CursorManager.o IdentityManager.o LifecycleManager.o HandlerManager.o WAM.o" DEFINES=-DNT_CONSOLE_APP INCLUDE_FLAG=-Iinclude COMPILE_FLAGS="-std=c++17 -Wall -Wextra" COMPILE_ONLY=-c LINK_FLAGS= TARGET_OUT="-o RNT" REMOVE="rm -f" all
+	$(MAKE) CXX=c++ TARGET=RNT OBJECTS="NT.o ObjectManager.o PermissionsManager.o NamespaceReferenceManager.o CursorManager.o IdentityManager.o LifecycleManager.o HandlerManager.o VM.o" DEFINES=-DNT_CONSOLE_APP INCLUDE_FLAG=-Iinclude COMPILE_FLAGS="-std=c++17 -Wall -Wextra" COMPILE_ONLY=-c LINK_FLAGS= TARGET_OUT="-o RNT" REMOVE="rm -f" all
 
 $(TARGET): $(OBJECTS)
 	$(CXX) $(LINK_FLAGS) $(OBJECTS) $(TARGET_OUT)
@@ -49,8 +49,8 @@ LifecycleManager.obj: src\LifecycleManager.cpp
 HandlerManager.obj: src\HandlerManager.cpp
 	$(CXX) $(DEFINES) $(INCLUDE_FLAG) $(COMPILE_FLAGS) $(COMPILE_ONLY) src\HandlerManager.cpp /Fo:HandlerManager.obj
 
-WAM.obj: src\WAM.cpp
-	$(CXX) $(DEFINES) $(INCLUDE_FLAG) $(COMPILE_FLAGS) $(COMPILE_ONLY) src\WAM.cpp /Fo:WAM.obj
+VM.obj: src\VM.cpp
+	$(CXX) $(DEFINES) $(INCLUDE_FLAG) $(COMPILE_FLAGS) $(COMPILE_ONLY) src\VM.cpp /Fo:VM.obj
 
 NT.o: src/NT.cpp
 	$(CXX) $(DEFINES) $(INCLUDE_FLAG) $(COMPILE_FLAGS) $(COMPILE_ONLY) src/NT.cpp -o NT.o
@@ -76,8 +76,8 @@ LifecycleManager.o: src/LifecycleManager.cpp
 HandlerManager.o: src/HandlerManager.cpp
 	$(CXX) $(DEFINES) $(INCLUDE_FLAG) $(COMPILE_FLAGS) $(COMPILE_ONLY) src/HandlerManager.cpp -o HandlerManager.o
 
-WAM.o: src/WAM.cpp
-	$(CXX) $(DEFINES) $(INCLUDE_FLAG) $(COMPILE_FLAGS) $(COMPILE_ONLY) src/WAM.cpp -o WAM.o
+VM.o: src/VM.cpp
+	$(CXX) $(DEFINES) $(INCLUDE_FLAG) $(COMPILE_FLAGS) $(COMPILE_ONLY) src/VM.cpp -o VM.o
 
 clean:
-	-$(REMOVE) RNT.exe RNT $(OBJECTS) NT.obj ObjectManager.obj PermissionsManager.obj NamespaceReferenceManager.obj CursorManager.obj IdentityManager.obj LifecycleManager.obj HandlerManager.obj WAM.obj NT.o ObjectManager.o PermissionsManager.o NamespaceReferenceManager.o CursorManager.o IdentityManager.o LifecycleManager.o HandlerManager.o WAM.o RNT.exp RNT.lib
+	-$(REMOVE) RNT.exe RNT $(OBJECTS) NT.obj ObjectManager.obj PermissionsManager.obj NamespaceReferenceManager.obj CursorManager.obj IdentityManager.obj LifecycleManager.obj HandlerManager.obj VM.obj NT.o ObjectManager.o PermissionsManager.o NamespaceReferenceManager.o CursorManager.o IdentityManager.o LifecycleManager.o HandlerManager.o VM.o RNT.exp RNT.lib

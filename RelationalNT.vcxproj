@@ -1,6 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
 <Project DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
-
   <ItemGroup Label="ProjectConfigurations">
     <ProjectConfiguration Include="Debug|Win32">
       <Configuration>Debug</Configuration>
@@ -19,19 +18,16 @@
       <Platform>x64</Platform>
     </ProjectConfiguration>
   </ItemGroup>
-
   <PropertyGroup Label="Globals">
     <VCProjectVersion>18.0</VCProjectVersion>
     <ProjectGuid>{FBC1C0B4-8B54-4A18-A91E-8A72767C5AE7}</ProjectGuid>
     <RootNamespace>RelationalNT</RootNamespace>
     <Keyword>MakeFileProj</Keyword>
   </PropertyGroup>
-
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
-
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'" Label="Configuration">
     <ConfigurationType>Makefile</ConfigurationType>
-    <UseDebugLibraries>true</UseDebugLibraries>    
+    <UseDebugLibraries>true</UseDebugLibraries>
     <PlatformToolset>v145</PlatformToolset>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'" Label="Configuration">
@@ -41,7 +37,7 @@
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'" Label="Configuration">
     <ConfigurationType>Makefile</ConfigurationType>
-    <UseDebugLibraries>true</UseDebugLibraries>    
+    <UseDebugLibraries>true</UseDebugLibraries>
     <PlatformToolset>v145</PlatformToolset>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'" Label="Configuration">
@@ -50,13 +46,10 @@
     <PlatformToolset>v145</PlatformToolset>
   </PropertyGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
-
   <ImportGroup Label="ExtensionSettings">
   </ImportGroup>
-
-  <ImportGroup Label="Shared" >
+  <ImportGroup Label="Shared">
   </ImportGroup>
-
   <ImportGroup Label="PropertySheets" Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
     <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
   </ImportGroup>
@@ -69,7 +62,6 @@
   <ImportGroup Label="PropertySheets" Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
     <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
   </ImportGroup>
-
   <PropertyGroup Label="UserMacros" />
   <PropertyGroup>
     <NMakeBuildCommandLine>nmake /f "$(ProjectDir)Makefile" windows</NMakeBuildCommandLine>
@@ -79,11 +71,12 @@
     <NMakePreprocessorDefinitions>NT_CONSOLE_APP;NT_WAIT_ON_EXIT;_CONSOLE</NMakePreprocessorDefinitions>
     <NMakeIncludeSearchPath>$(ProjectDir)include</NMakeIncludeSearchPath>
     <LocalDebuggerCommand>$(ProjectDir)RNT.exe</LocalDebuggerCommand>
-    <LocalDebuggerCommandArguments></LocalDebuggerCommandArguments>
+    <LocalDebuggerCommandArguments>
+    </LocalDebuggerCommandArguments>
     <LocalDebuggerWorkingDirectory>$(ProjectDir)</LocalDebuggerWorkingDirectory>
   </PropertyGroup>
-
-  <ItemDefinitionGroup></ItemDefinitionGroup>
+  <ItemDefinitionGroup>
+  </ItemDefinitionGroup>
   <ItemGroup>
     <ClCompile Include="src\CursorManager.cpp" />
     <ClCompile Include="src\HandlerManager.cpp" />
@@ -93,7 +86,7 @@
     <ClCompile Include="src\NT.cpp" />
     <ClCompile Include="src\ObjectManager.cpp" />
     <ClCompile Include="src\PermissionsManager.cpp" />
-    <ClCompile Include="src\WAM.cpp" />
+    <ClCompile Include="src\VM.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="include\Api.h" />
@@ -107,14 +100,12 @@
     <ClInclude Include="include\PermissionsManager.h" />
     <ClInclude Include="include\Runtime.h" />
     <ClInclude Include="include\Types.h" />
-    <ClInclude Include="include\WAM.h" />
+    <ClInclude Include="include\VM.h" />
   </ItemGroup>
   <ItemGroup>
     <None Include="Makefile" />
   </ItemGroup>
-
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
-
   <ImportGroup Label="ExtensionTargets">
   </ImportGroup>
 </Project>

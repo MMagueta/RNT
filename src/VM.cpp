@@ -1,4 +1,4 @@
-#include "WAM.h"
+#include "VM.h"
 
 namespace nt
 {

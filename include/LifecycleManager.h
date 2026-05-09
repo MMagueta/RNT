@@ -10,6 +10,7 @@ namespace nt
     public:
         // If object is not being monitored already, monitors the lifecycle by updating the handle count.
         // Maybe also look at the reference count and kill some categories of disposable objects no longer referenced by other objects, like transactions.
+        // One use case is preventing compaction/prunning of history while cursors depend on old database snapshots, for example.
         // Think of other use cases later.
         void Monitor(ObjectManager::registry* object);
         // Serializes contention for the change of a mutable reference.
