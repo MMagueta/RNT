@@ -7,7 +7,17 @@
 
 Relational NT is an experimental database kernel inspired by the object-management model of the Windows NT kernel. The project explores what database internals look like when relations, tuples, transactions, namespaces, permissions, cursors, and handles are treated as explicit runtime-managed objects.
 
-The goal is to build a small, understandable runtime where database state is accessed through uniform paths, guarded by explicit security checks, and managed through visible lifecycle rules. The codebase is still early, so several classes define architectural boundaries before they define complete behavior.
+The goal is a small, understandable runtime where database state is accessed through uniform paths, guarded by explicit security checks, and managed through visible lifecycle rules. The codebase is still early, so several classes define architectural boundaries before they define complete behavior.
+
+* Motivation
+
+The NT kernel is a good model for a dedicated database kernel for three reasons.
+
+**The object manager.** NT's OB gives every kernel resource a named path in a hierarchical namespace, a security descriptor, and a uniform open and close lifecycle enforced through handles. A database kernel has the same requirements: relations, transactions, cursors, and namespaces all need to be located by path, checked for access, and cleaned up when the last handle closes. Rather than building those mechanisms independently for each database concept, this project borrows the NT object manager's shape directly. The result is a single, consistent runtime model instead of a collection of loosely related subsystems.
+
+**Physical backends as drivers.** NT device drivers expose a narrow dispatch table. The kernel routes I/O through it without knowing whether the device is a local disk, a USB key, or a network adapter. Storage backends in a database kernel follow the same pattern. SQLite and an in-memory store both satisfy the same interface here. A remote backend like etcd is just another driver, but it brings its own concerns: network latency, connection management, and the possibility of partial failure. The driver boundary keeps those concerns inside the backend module and out of the rest of the kernel.
+
+**Clients as environment subsystems.** NT supports Win32, POSIX, and OS/2 as environment subsystems layered above a common native API. Each subsystem translates its own conventions into native NT system calls; the kernel itself knows nothing about Win32 or POSIX. A database client works the same way. A PostgreSQL wire adapter, a MySQL wire adapter, or an HTTP/JSON interface each translates its protocol into kernel-level operations: handle opens, cursor iterations, VM plan evaluations. The kernel never sees SQL syntax or protocol framing. Adding a new wire protocol means implementing a new translation layer, not touching the kernel.
 
 * Design Direction
 
@@ -16,24 +26,26 @@ The goal is to build a small, understandable runtime where database state is acc
 - Identity and lifecycle: opening, closing, monitoring, pinning, cleanup, and contention are modeled as runtime responsibilities.
 - Handles: authorized access is explicit, which makes ownership, accounting, and cleanup visible.
 - Cursors and VM: retrieval is designed around pull-based cursors and a split between terminating first-order logic and higher-order logic execution.
+- Storage: tuples are content-addressed. Each one is stored under the SHA256 digest of its serialized bytes. The physical layer is a pluggable KV backend (=IStorageBackend=); the current implementation uses SQLite.
 
 * Current Status
 
-The project is currently focused on the runtime shape. Many components are intentionally skeletal while the core abstractions settle, but the headers document the intended responsibilities and constraints of each manager.
+The open-handle pipeline is wired end-to-end and cursors pull tuples lazily from the storage backend one page at a time through the Tarski FOL engine. The active backend (=SqliteBackend=) keeps a =kv(hash, value)= table for content-addressed tuple data and a =relation_index(path, hash)= table for relation membership. =InMemoryBackend= provides the same interface for tests.
+
+Several manager features are still being designed: dual ref counting, type callbacks, trie-based object lookup, and the namespace reparse layer. These are specified in header comments.
 
 * Building
 
-The repository includes a Visual Studio makefile project and a root =Makefile=. On Windows, build with the Visual Studio/NMake environment available:
+Requires MSVC, CMake 3.10 or later, and vcpkg. Dependencies (=sqlite3= and =picosha2=) are fetched and built automatically during CMake configure via the vcpkg manifest.
 
 #+begin_src shell
-nmake /f Makefile windows
+cmake --preset x64-debug
+cmake --build out/build/x64-debug
 #+end_src
 
-For Unix-like environments with a C++17 compiler and Make installed:
+The output binary is =out/build/x64-debug/RelationalNT.exe=. A release build uses =--preset x64-release=. Visual Studio picks up =CMakePresets.json= automatically if you open the repository folder directly.
 
-#+begin_src shell
-make unix
-#+end_src
+The first configure downloads and builds the vcpkg dependencies. Subsequent configures use the binary cache and are fast.
 
 * Documentation
 
