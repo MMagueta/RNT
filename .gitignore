@@ -32,3 +32,6 @@ RNT.lib
 libRNT.so
 libRNT.dylib
 docs/generated/
+
+# vcpkg manifest mode artifacts
+vcpkg_installed/

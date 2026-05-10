@@ -1,0 +1,6 @@
+Package: picosha2
+Version: 1.0.1
+Architecture: x64-windows
+Multi-Arch: same
+Abi: dbc39d7b257abe20af9df18fd431d5be65bfebcaa73f6da5f1485fb3aeb85dba
+Description: PicoSHA2 - a header-file-only C++ SHA256 hash generator

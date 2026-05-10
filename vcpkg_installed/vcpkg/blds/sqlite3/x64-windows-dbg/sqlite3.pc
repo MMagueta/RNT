@@ -1,0 +1,12 @@
+prefix=C:/Users/mague/source/repos/RelationalNT/vcpkg_installed/vcpkg/pkgs/sqlite3_x64-windows/debug
+exec_prefix=${prefix}
+libdir=${prefix}/lib
+includedir=${prefix}/include
+
+Name: SQLite
+Description: SQL database engine
+Version: 3.53.1
+Libs: -L${libdir} -lsqlite3
+Libs.private: 
+Requires.private: 
+Cflags: -I${includedir}

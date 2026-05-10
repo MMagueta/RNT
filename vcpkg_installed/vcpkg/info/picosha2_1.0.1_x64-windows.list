@@ -1,0 +1,8 @@
+x64-windows/
+x64-windows/include/
+x64-windows/include/picosha2.h
+x64-windows/share/
+x64-windows/share/picosha2/
+x64-windows/share/picosha2/copyright
+x64-windows/share/picosha2/vcpkg.spdx.json
+x64-windows/share/picosha2/vcpkg_abi_info.txt

@@ -7,6 +7,8 @@
 #include "LifecycleManager.h"
 #include "ObjectManager.h"
 #include "PermissionsManager.h"
+#include "SqliteBackend.h"
+#include "TupleCodec.h"
 #include "VM.h"
 
 #include <iostream>
@@ -30,7 +32,7 @@ int main()
     const nt::NT runtime;
     std::cout << "RNT running: " << (runtime.IsRunning() ? "yes" : "no") << '\n';
 
-    // --- Mock: register user in the object registry ---
+    // --- Mock: register villager in the object registry ---
     nt::ObjectManager objects;
 
     std::unique_ptr<nt::ObjectManager::object_type> type = std::make_unique<nt::ObjectManager::object_type>();
@@ -38,25 +40,32 @@ int main()
     type->disposable = false;
     type->methods = { OPEN, CLOSE };
 
-    objects.Register({ "multigroups", "sakura", "relations", "user" }, std::make_unique<nt::ObjectManager::Relation>(), std::move(type));
+    objects.Register({ "multigroups", "sakura", "relations", "villager" }, std::make_unique<nt::ObjectManager::Relation>(), std::move(type));
 
-    // --- Mock: populate the cursor store with three tuples ---
-    nt::CursorManager cursors;
-    cursors.MockInsert({ "multigroups", "sakura", "relations", "user" }, { { "name", "Alice" }, { "age", "30" } });
-    cursors.MockInsert({ "multigroups", "sakura", "relations", "user" }, { { "name", "Bob"   }, { "age", "25" } });
-    cursors.MockInsert({ "multigroups", "sakura", "relations", "user"}, {{"name", "Carol"}, {"age", "35"}});
+    // --- Populate SQLite backend with three tuples ---
+    nt::SqliteBackend backend;
+    const std::vector<std::string> path = { "multigroups", "sakura", "relations", "villager" };
+    auto store = [&](std::vector<nt::Attribute> attrs) {
+        auto bytes = nt::TupleCodec::Serialize(attrs);
+        auto hash  = backend.Put(bytes);
+        backend.LinkTuple(path, hash);
+    };
+    store({ { "name", "Blathers" }, { "profession", "Museum Curator" } });
+    store({ { "name", "Rover"   }, { "profession", "Traveller" } });
+    store({ { "name", "K.K." }, { "profession", "Artist" } });
+    nt::CursorManager cursors(backend);
 
-    // --- Open a handle on user through the full manager pipeline ---
+    // --- Open a handle on villager through the full manager pipeline ---
     nt::PermissionsManager permissions;
     nt::IdentityManager identities;
     nt::LifecycleManager lifecycles;
     nt::HandlerManager handler(objects, permissions, identities, lifecycles);
 
     int connection = 1;  // dummy connection context
-    nt::HandlerManager::handle* handle = handler.Open({ "multigroups", "sakura", "relations", "user" }, &connection);
+    nt::HandlerManager::handle* handle = handler.Open({ "multigroups", "sakura", "relations", "villager" }, &connection);
     if (handle == nullptr)
     {
-        std::cout << "Failed to open handle for user\n";
+        std::cout << "Failed to open handle for villager\n";
         return 1;
     }
 
@@ -64,7 +73,7 @@ int main()
     nt::CursorManager::cursor* cursor = cursors.Open(handle);
     if (cursor == nullptr)
     {
-        std::cout << "Failed to open cursor for user\n";
+        std::cout << "Failed to open cursor for villager\n";
         handler.Close(handle);
         return 1;
     }
@@ -75,7 +84,7 @@ int main()
     plan.scan_cursor = cursor;
 
     nt::VM vm(cursors);
-    std::cout << "Tuples in user:\n";
+    std::cout << "Tuples in villager:\n";
     while (nt::Tuple* t = vm.Next(&plan))
     {
         std::cout << "  ";
