@@ -30,33 +30,33 @@ int main()
     const nt::NT runtime;
     std::cout << "RNT running: " << (runtime.IsRunning() ? "yes" : "no") << '\n';
 
-    // --- Mock: register RelationX in the object registry ---
+    // --- Mock: register user in the object registry ---
     nt::ObjectManager objects;
 
-    auto type = std::make_unique<nt::ObjectManager::object_type>();
+    std::unique_ptr<nt::ObjectManager::object_type> type = std::make_unique<nt::ObjectManager::object_type>();
     type->label = RELATION;
     type->disposable = false;
     type->methods = { OPEN, CLOSE };
 
-    objects.Register({ "RelationX" }, std::make_unique<nt::ObjectManager::Relation>(), std::move(type));
+    objects.Register({ "multigroups", "sakura", "relations", "user" }, std::make_unique<nt::ObjectManager::Relation>(), std::move(type));
 
     // --- Mock: populate the cursor store with three tuples ---
     nt::CursorManager cursors;
-    cursors.MockInsert({ "RelationX" }, { { "name", "Alice" }, { "age", "30" } });
-    cursors.MockInsert({ "RelationX" }, { { "name", "Bob"   }, { "age", "25" } });
-    cursors.MockInsert({ "RelationX" }, { { "name", "Carol" }, { "age", "35" } });
+    cursors.MockInsert({ "multigroups", "sakura", "relations", "user" }, { { "name", "Alice" }, { "age", "30" } });
+    cursors.MockInsert({ "multigroups", "sakura", "relations", "user" }, { { "name", "Bob"   }, { "age", "25" } });
+    cursors.MockInsert({ "multigroups", "sakura", "relations", "user"}, {{"name", "Carol"}, {"age", "35"}});
 
-    // --- Open a handle on RelationX through the full manager pipeline ---
+    // --- Open a handle on user through the full manager pipeline ---
     nt::PermissionsManager permissions;
     nt::IdentityManager identities;
     nt::LifecycleManager lifecycles;
     nt::HandlerManager handler(objects, permissions, identities, lifecycles);
 
     int connection = 1;  // dummy connection context
-    nt::HandlerManager::handle* handle = handler.Open({ "RelationX" }, &connection);
+    nt::HandlerManager::handle* handle = handler.Open({ "multigroups", "sakura", "relations", "user" }, &connection);
     if (handle == nullptr)
     {
-        std::cout << "Failed to open handle for RelationX\n";
+        std::cout << "Failed to open handle for user\n";
         return 1;
     }
 
@@ -64,7 +64,7 @@ int main()
     nt::CursorManager::cursor* cursor = cursors.Open(handle);
     if (cursor == nullptr)
     {
-        std::cout << "Failed to open cursor for RelationX\n";
+        std::cout << "Failed to open cursor for user\n";
         handler.Close(handle);
         return 1;
     }
@@ -75,7 +75,7 @@ int main()
     plan.scan_cursor = cursor;
 
     nt::VM vm(cursors);
-    std::cout << "Tuples in RelationX:\n";
+    std::cout << "Tuples in user:\n";
     while (nt::Tuple* t = vm.Next(&plan))
     {
         std::cout << "  ";

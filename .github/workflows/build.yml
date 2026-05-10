@@ -1,0 +1,23 @@
+name: Build
+
+on:
+  push:
+    branches:
+      - master
+  pull_request:
+
+jobs:
+  build:
+    runs-on: windows-latest
+    strategy:
+      matrix:
+        preset: [x64-debug, x64-release]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure
+        run: cmake --preset ${{ matrix.preset }}
+
+      - name: Build
+        run: cmake --build out/build/${{ matrix.preset }}
