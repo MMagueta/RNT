@@ -21,6 +21,13 @@ jobs:
         with:
           arch: x64
 
+      - name: Sync vcpkg baseline
+        run: |
+          $baseline = git -C $env:VCPKG_INSTALLATION_ROOT rev-parse HEAD
+          $json = Get-Content vcpkg.json | ConvertFrom-Json
+          $json.'builtin-baseline' = $baseline
+          $json | ConvertTo-Json | Set-Content vcpkg.json
+
       - name: Configure
         run: cmake --preset ${{ matrix.preset }}
 
