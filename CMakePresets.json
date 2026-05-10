@@ -1,63 +1,61 @@
-{
+﻿{
     "version": 3,
     "configurePresets": [
         {
-            "name": "windows-debug",
-            "displayName": "Windows Debug",
+            "name": "windows-base",
+            "hidden": true,
             "generator": "Ninja",
-            "binaryDir": "${sourceDir}/out/debug",
+            "binaryDir": "${sourceDir}/out/build/${presetName}",
+            "installDir": "${sourceDir}/out/install/${presetName}",
             "cacheVariables": {
-                "CMAKE_BUILD_TYPE": "Debug",
-                "NT_WAIT_ON_EXIT": "ON"
+                "CMAKE_C_COMPILER": "cl.exe",
+                "CMAKE_CXX_COMPILER": "cl.exe"
+            },
+            "condition": {
+                "type": "equals",
+                "lhs": "${hostSystemName}",
+                "rhs": "Windows"
             }
         },
         {
-            "name": "windows-release",
-            "displayName": "Windows Release",
-            "generator": "Ninja",
-            "binaryDir": "${sourceDir}/out/release",
+            "name": "x64-debug",
+            "displayName": "x64 Debug",
+            "inherits": "windows-base",
+            "architecture": {
+                "value": "x64",
+                "strategy": "external"
+            },
             "cacheVariables": {
-                "CMAKE_BUILD_TYPE": "Release",
-                "NT_WAIT_ON_EXIT": "OFF"
+                "CMAKE_BUILD_TYPE": "Debug"
             }
         },
         {
-            "name": "unix-debug",
-            "displayName": "Unix Debug",
-            "generator": "Ninja",
-            "binaryDir": "${sourceDir}/out/debug",
+            "name": "x64-release",
+            "displayName": "x64 Release",
+            "inherits": "x64-debug",
             "cacheVariables": {
-                "CMAKE_BUILD_TYPE": "Debug",
-                "NT_WAIT_ON_EXIT": "ON"
+                "CMAKE_BUILD_TYPE": "Release"
             }
         },
         {
-            "name": "unix-release",
-            "displayName": "Unix Release",
-            "generator": "Ninja",
-            "binaryDir": "${sourceDir}/out/release",
+            "name": "x86-debug",
+            "displayName": "x86 Debug",
+            "inherits": "windows-base",
+            "architecture": {
+                "value": "x86",
+                "strategy": "external"
+            },
             "cacheVariables": {
-                "CMAKE_BUILD_TYPE": "Release",
-                "NT_WAIT_ON_EXIT": "OFF"
+                "CMAKE_BUILD_TYPE": "Debug"
             }
-        }
-    ],
-    "buildPresets": [
-        {
-            "name": "windows-debug",
-            "configurePreset": "windows-debug"
         },
         {
-            "name": "windows-release",
-            "configurePreset": "windows-release"
-        },
-        {
-            "name": "unix-debug",
-            "configurePreset": "unix-debug"
-        },
-        {
-            "name": "unix-release",
-            "configurePreset": "unix-release"
+            "name": "x86-release",
+            "displayName": "x86 Release",
+            "inherits": "x86-debug",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "Release"
+            }
         }
     ]
 }

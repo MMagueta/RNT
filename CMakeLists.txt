@@ -1,38 +1,34 @@
-cmake_minimum_required(VERSION 3.20)
-project(RelationalNT LANGUAGES CXX)
+﻿# CMakeList.txt : CMake project for RelationalNT, include source and define
+# project specific logic here.
+#
+cmake_minimum_required (VERSION 3.10)
 
-set(CMAKE_CXX_STANDARD 17)
-set(CMAKE_CXX_STANDARD_REQUIRED ON)
-set(CMAKE_CXX_EXTENSIONS OFF)
+# Enable Hot Reload for MSVC compilers if supported.
+if (POLICY CMP0141)
+  cmake_policy(SET CMP0141 NEW)
+  set(CMAKE_MSVC_DEBUG_INFORMATION_FORMAT "$<IF:$<AND:$<C_COMPILER_ID:MSVC>,$<CXX_COMPILER_ID:MSVC>>,$<$<CONFIG:Debug,RelWithDebInfo>:EditAndContinue>,$<$<CONFIG:Debug,RelWithDebInfo>:ProgramDatabase>>")
+endif()
 
-# Toggle the "Press Enter to exit" prompt. ON by default for interactive runs;
-# set -DNT_WAIT_ON_EXIT=OFF on the cmake command line to disable (e.g. in CI).
-option(NT_WAIT_ON_EXIT "Wait for Enter key before exiting the console app" ON)
+project ("RelationalNT")
 
-set(SOURCES
-    src/CursorManager.cpp
-    src/HandlerManager.cpp
-    src/IdentityManager.cpp
-    src/LifecycleManager.cpp
-    src/NamespaceReferenceManager.cpp
-    src/NT.cpp
-    src/ObjectManager.cpp
-    src/PermissionsManager.cpp
-    src/VM.cpp
+# Add source to this project's executable.
+add_executable (RelationalNT
+    "src/RelationalNT.cpp"
+    "src/ObjectManager.cpp"
+    "src/PermissionsManager.cpp"
+    "src/IdentityManager.cpp"
+    "src/LifecycleManager.cpp"
+    "src/HandlerManager.cpp"
+    "src/CursorManager.cpp"
+    "src/NamespaceReferenceManager.cpp"
+    "src/VM.cpp"
 )
 
-add_executable(RNT ${SOURCES})
+target_include_directories(RelationalNT PRIVATE "include")
+target_compile_definitions(RelationalNT PRIVATE NT_CONSOLE_APP)
 
-target_include_directories(RNT PRIVATE include)
-
-target_compile_definitions(RNT PRIVATE NT_CONSOLE_APP)
-
-if(NT_WAIT_ON_EXIT)
-    target_compile_definitions(RNT PRIVATE NT_WAIT_ON_EXIT)
+if (CMAKE_VERSION VERSION_GREATER 3.12)
+  set_property(TARGET RelationalNT PROPERTY CXX_STANDARD 20)
 endif()
 
-if(MSVC)
-    target_compile_options(RNT PRIVATE /W4)
-else()
-    target_compile_options(RNT PRIVATE -Wall -Wextra)
-endif()
+# TODO: Add tests and install targets if needed.
