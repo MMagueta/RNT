@@ -1,8 +1,11 @@
 #pragma once
 
+#include <string>
+#include <vector>
+
 /**
  * @file Types.h
- * @brief Shared enum types used by the runtime managers.
+ * @brief Shared enum types and core data types used by the runtime.
  */
 
 /** @brief Runtime object categories known by the object manager. */
@@ -11,9 +14,7 @@ enum OBJECT_TYPE {
     MULTIGROUP,
     /** A relation object. */
     RELATION,
-    /** A tuple object. */
-    TUPLE,
-    /** An attribute object. */
+    /** An attribute object (schema metadata). */
     ATTRIBUTE,
     /** A transaction object. */
     TRANSACTION
@@ -46,3 +47,37 @@ enum AUTH_METHOD {
     /** Plain-text authentication. */
     PLAIN_TEXT
 };
+
+namespace nt
+{
+    /** @brief A single named value in a tuple, produced by the cursor layer. */
+    struct Attribute {
+        std::string name;
+        std::string value;
+    };
+
+    /**
+     * @brief A single row of data streamed lazily from the cursor layer.
+     *
+     * Follows the Volcano pull model: callers repeatedly call Next() to consume
+     * one attribute at a time. Returns nullptr when all attributes are exhausted.
+     */
+    class Tuple {
+    public:
+        explicit Tuple(std::vector<Attribute> attributes)
+            : attributes_(std::move(attributes)) {}
+
+        /** @brief Returns the next attribute, or nullptr when exhausted. */
+        const Attribute* Next() {
+            if (position_ < attributes_.size())
+                return &attributes_[position_++];
+            return nullptr;
+        }
+
+        void Reset() { position_ = 0; }
+
+    private:
+        std::vector<Attribute> attributes_;
+        size_t position_ = 0;
+    };
+}

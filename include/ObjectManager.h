@@ -4,6 +4,7 @@
 #include "Types.h"
 
 #include <cstdint>
+#include <memory>
 #include <set>
 #include <string>
 #include <vector>
@@ -31,14 +32,12 @@ namespace nt
             virtual ~IObject() = default;
         };
 
-        /** @brief Object representing a multigroup. */
-        class Multigroup : IObject {};
-        /** @brief Object representing a relation. */
-        class Relation : IObject {};
-        /** @brief Object representing a tuple. */
-        class Tuple : IObject {};
-        /** @brief Object representing a transaction. */
-        class Transaction : IObject {};
+        /** @brief Abstract registry object representing a multigroup. */
+        class Multigroup : public IObject {};
+        /** @brief Abstract registry object representing a relation. */
+        class Relation : public IObject {};
+        /** @brief Abstract registry object representing a transaction. */
+        class Transaction : public IObject {};
 
         /** @brief Describes the behavior and capabilities of an object category. */
         struct object_type {
@@ -52,12 +51,14 @@ namespace nt
 
         /** @brief Shared metadata stored at the head of a registry entry. */
         struct registry_head {
-            /** Number of object-to-object references. */
-            uint32_t reference_count;
-            /** Number of open handles. */
-            uint32_t handle_count;
-            /** Object type metadata. */
-            struct object_type* type;
+            // TODO: Increment reference_count when one registry object depends on another
+            // (e.g. an ephemeral view that references base relations). Decrement when the
+            // dependency is removed. Used to block cleanup of objects still referenced by others.
+            uint32_t reference_count = 0;
+            /** Number of open handles. Maintained by LifecycleManager::Monitor/Unmonitor. */
+            uint32_t handle_count = 0;
+            /** Object type metadata. Owned by this head. */
+            std::unique_ptr<object_type> type;
             /** Logical object path inside the namespace. */
             std::vector<std::string> path;
             /** security_descriptor to be added later, maybe also a set of labels */
@@ -66,21 +67,31 @@ namespace nt
         /** @brief Node in the object registry. */
         struct registry {
             /** Shared metadata for this object. */
-            struct registry_head* head;
-            /** Stored object payload. */
-            IObject object;
+            std::unique_ptr<registry_head> head;
+            /** Abstract object payload. Owned by this entry. */
+            std::unique_ptr<IObject> object;
             /** TODO: Treat as a list for now, but ideally it is a tree. */
-            struct registry* next;
+            std::unique_ptr<registry> next;
         };
 
-        /** Root registry entries. */
-        struct registry** entries;
+        /** @brief Head of the registry linked list. Owned by this manager. */
+        std::unique_ptr<registry> entries;
+
+        /**
+         * @brief Registers an object under the given path, taking ownership of it.
+         * @param path    Logical object path.
+         * @param object  Object payload. Ownership is transferred to the registry.
+         * @param type    Object type descriptor. Ownership is transferred to the registry.
+         */
+        void Register(std::vector<std::string> path,
+                      std::unique_ptr<IObject> object,
+                      std::unique_ptr<object_type> type);
 
         /**
          * @brief Looks into this registry and attempts to retrieve an entry.
          * @param object_path Logical path to search for.
-         * @return Matching registry entry, or nullptr when no object is found.
+         * @return Borrowed pointer to the matching entry, or nullptr when not found.
          */
-        struct registry* Find(const std::vector<std::string> object_path);
+        registry* Find(const std::vector<std::string> object_path);
     };
 }

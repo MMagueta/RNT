@@ -1,6 +1,8 @@
 #pragma once
 
 #include "Api.h"
+#include "CursorManager.h"
+#include "Types.h"
 
 /**
  * @file VM.h
@@ -45,7 +47,50 @@ namespace nt
      *   snapshots pinned through LifecycleManager::Monitor only for the minimum
      *   time required.
      */
+    /**
+     * @brief A node in the Volcano operator tree executed by the Tarski (FOL) runtime.
+     *
+     * Each node represents one relational algebra operator. The tree is demand-driven:
+     * VM::Next() propagates pull requests from root to leaves.
+     *
+     * TODO: Add FILTER, PROJECT, and JOIN operators as the query layer grows.
+     */
+    struct NT_API PlanNode
+    {
+        enum class Op { SCAN };
+
+        Op op;
+        PlanNode* left  = nullptr;  /**< Left child (binary operators). */
+        PlanNode* right = nullptr;  /**< Right child (binary operators). */
+
+        /** Cursor to scan. Set when op == SCAN. */
+        CursorManager::cursor* scan_cursor = nullptr;
+    };
+
     class NT_API VM
     {
+    public:
+        // TODO: CursorManager should be injected as a shared runtime instance,
+        // matching the pattern flagged for HandlerManager and LifecycleManager.
+        //
+        // A single CursorManager instance supports multiple simultaneous cursors —
+        // all iteration state lives in each cursor struct, not in the manager.
+        // A JOIN plan, for example, holds two independent cursors (one per SCAN leaf)
+        // and both are driven through the same CursorManager reference.
+        explicit VM(CursorManager& cursors);
+
+        /**
+         * @brief Pulls the next tuple from the plan tree (Tarski/FOL core).
+         *
+         * Propagates a Next() call down the operator tree. The call chain
+         * terminates at a SCAN node, which delegates to CursorManager.
+         *
+         * @param node Root of the plan subtree to evaluate.
+         * @return Next matching tuple, or nullptr when the plan is exhausted.
+         */
+        Tuple* Next(PlanNode* node);
+
+    private:
+        CursorManager& cursors_;
     };
 }

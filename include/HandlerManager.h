@@ -13,10 +13,26 @@
 
 namespace nt
 {
+    class IdentityManager;
+    class LifecycleManager;
+    class PermissionsManager;
+
     /** @brief Opens and closes authorized handles to registry objects. */
     class NT_API HandlerManager
     {
     public:
+        /**
+         * @brief Constructs a HandlerManager with shared runtime dependencies.
+         *
+         * All managers are injected so that state (registry entries, lifecycle
+         * counters, permission policy) persists across calls rather than being
+         * rebuilt per open/close.
+         */
+        HandlerManager(ObjectManager& objects,
+                       PermissionsManager& permissions,
+                       IdentityManager& identities,
+                       LifecycleManager& lifecycles);
+
         /**
          * @brief Represents authorized access to an object in the registry.
          *
@@ -51,5 +67,11 @@ namespace nt
          * @return True when the handle was closed successfully.
          */
         bool Close(struct handle* handle);
+
+    private:
+        ObjectManager& objects_;
+        PermissionsManager& permissions_;
+        IdentityManager& identities_;
+        LifecycleManager& lifecycles_;
     };
 }
