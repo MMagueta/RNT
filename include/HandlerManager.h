@@ -2,7 +2,9 @@
 
 #include "Api.h"
 #include "ObjectManager.h"
+#include "Types.h"
 
+#include <set>
 #include <string>
 #include <vector>
 
@@ -36,15 +38,33 @@ namespace nt
         /**
          * @brief Represents authorized access to an object in the registry.
          *
-         * This increases the handle count in the object manager. We should
-         * consider adding a vector to the object manager with all handles that
-         * refer to an object.
+         * The access mask is evaluated once during Open and cached here for the
+         * lifetime of the handle. Subsequent operations check `granted_access`
+         * rather than re-evaluating the security descriptor on every call. This
+         * resolves the performance question in PermissionsManager about when to
+         * check permissions.
+         *
+         * Because storage is append-only, a WRITE claim does not mean mutating an
+         * existing tuple in-place. It means the session is authorized to commit a
+         * new snapshot version of the relation. Two sessions holding WRITE handles
+         * on the same relation always produce independent snapshots — there is no
+         * data-level conflict.
+         *
+         * @todo Populate `granted_access` inside HandlerManager::Open from
+         *       PermissionsManager::Firewall / Access. See docs/reactos-ob-comparison.md §4.
          */
         struct handle {
             /** Object referenced by this handle. */
             ObjectManager::registry* object = nullptr;
             /** Connection metadata associated with the authorized access. */
             void* connection_context = nullptr;
+            /**
+             * Access claims granted to this handle at open time.
+             * Cached here so that per-operation checks read from the handle
+             * rather than re-evaluating the security descriptor.
+             * @todo Populate in HandlerManager::Open.
+             */
+            std::set<AUTH_CLAIM> granted_access;
         };
 
         /**

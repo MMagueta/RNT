@@ -25,6 +25,23 @@
  * - VM separates terminating relational retrieval from higher-order logic
  *   execution.
  *
+ * @section design Design Notes
+ *
+ * The following documents record architectural decisions and comparisons with
+ * the ReactOS NT kernel, which this project draws from:
+ *
+ * - **docs/reactos-ob-comparison.md** — Object manager comparison: dual
+ *   reference counting, type callbacks, hash directory, per-handle access
+ *   masks, capability security, branch HEAD contention, and the namespace
+ *   reparse layer.
+ *
+ * - **docs/nt-architecture-mapping.md** — Holistic mapping of the full NT
+ *   kernel to a database kernel: wire protocols as environment subsystems,
+ *   the I/O driver stack as the query operator pipeline, drivers as storage
+ *   backends, MM as the buffer pool, CC as the WAL flusher, PS as the
+ *   session manager, SE as the authorization engine, and LPC as the wire
+ *   protocol connection layer.
+ *
  * @section building Building
  *
  * From a Visual Studio/NMake environment:

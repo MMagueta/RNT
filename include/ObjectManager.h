@@ -39,21 +39,75 @@ namespace nt
         /** @brief Abstract registry object representing a transaction. */
         class Transaction : public IObject {};
 
-        /** @brief Describes the behavior and capabilities of an object category. */
+        /**
+         * @brief Describes the behavior and capabilities of an object category.
+         *
+         * @todo Replace `methods` with typed callback fields: `OpenProcedure`,
+         *       `CloseProcedure`, `DeleteProcedure`, and `ParseProcedure`.
+         *       Store a `const char* name` label alongside each callback so that
+         *       logs and assertions can identify which type fired without having
+         *       to dereference a pointer. `IdentityManager::CanOpen` / `CanClose`
+         *       then become thin dispatchers that invoke the corresponding
+         *       procedure, or are absorbed into `HandlerManager` directly.
+         *       See docs/reactos-ob-comparison.md §2.
+         *
+         * @todo Add an `exclusive` flag for mutable reference objects (branch
+         *       HEADs, namespace entries). Non-exclusive objects — immutable
+         *       snapshots, transactions — must skip contention checks entirely.
+         *       See docs/reactos-ob-comparison.md §6.
+         */
         struct object_type {
             /** Object category label. */
             OBJECT_TYPE label;
             /** True when the object is not durable. For example: TRANSACTION. */
             bool disposable;
-            /** Methods supported by this object type. */
+            /**
+             * Methods supported by this object type.
+             * @todo Replace with typed callback function pointers. See class-level todo.
+             */
             std::set<METHOD> methods;
+            /**
+             * When true, only one write-mode handle may be open at a time.
+             * Applies to mutable reference states such as branch HEADs.
+             * Immutable snapshot objects must leave this false.
+             * @todo Wire into LifecycleManager::Contention.
+             */
+            bool exclusive = false;
         };
 
-        /** @brief Shared metadata stored at the head of a registry entry. */
+        /**
+         * @brief Shared metadata stored at the head of a registry entry.
+         *
+         * Two independent reference counters govern object lifetime.
+         * An object is eligible for garbage collection only when both reach zero:
+         *
+         * - `handle_count` — open sessions holding a cursor or handle on this object.
+         *   Managed exclusively by LifecycleManager::Monitor / Unmonitor.
+         * - `reference_count` — structural dependencies such as a view referencing its
+         *   base relations, or a cursor pinned to an immutable snapshot version.
+         *   Managed by LifecycleManager::Pin / Unpin (not yet implemented).
+         *
+         * All snapshot versions are immutable. An insertion or deletion produces a new
+         * snapshot rather than mutating an existing one. A snapshot's `reference_count`
+         * is non-zero while any cursor is pinned to it and drops to zero only when all
+         * such cursors are released.
+         *
+         * @todo Implement `reference_count` tracking. Add LifecycleManager::Pin /
+         *       Unpin. Update LifecycleManager::Unmonitor to gate GC on both counters
+         *       reaching zero. See docs/reactos-ob-comparison.md §1.
+         *
+         * @todo Define and attach a security_descriptor. When added, store it as a
+         *       pointer into a shared, content-addressed SD cache rather than inline.
+         *       Permissions are strictly capability-based and must never be inherited
+         *       from a parent namespace entry. See docs/reactos-ob-comparison.md §5.
+         */
         struct registry_head {
-            // TODO: Increment reference_count when one registry object depends on another
-            // (e.g. an ephemeral view that references base relations). Decrement when the
-            // dependency is removed. Used to block cleanup of objects still referenced by others.
+            /**
+             * Structural dependency count. Non-zero while another registry object
+             * references this one (e.g. a view depending on a base relation, or a
+             * cursor pinned to a snapshot version).
+             * @todo Implement via LifecycleManager::Pin / Unpin.
+             */
             uint32_t reference_count = 0;
             /** Number of open handles. Maintained by LifecycleManager::Monitor/Unmonitor. */
             uint32_t handle_count = 0;
@@ -61,7 +115,6 @@ namespace nt
             std::unique_ptr<object_type> type;
             /** Logical object path inside the namespace. */
             std::vector<std::string> path;
-            /** security_descriptor to be added later, maybe also a set of labels */
         };
 
         /** @brief Node in the object registry. */
@@ -70,7 +123,15 @@ namespace nt
             std::unique_ptr<registry_head> head;
             /** Abstract object payload. Owned by this entry. */
             std::unique_ptr<IObject> object;
-            /** TODO: Treat as a list for now, but ideally it is a tree. */
+            /**
+             * Next entry in the registry. Currently a flat linked list.
+             * @todo Replace with a trie whose nodes are per-path-segment hash maps.
+             *       Each directory level holds a hash map from segment string to
+             *       child registry*. Find() and Register() walk the trie
+             *       component-by-component instead of scanning a flat list.
+             *       Consider pulling a well-tested radix-tree via vcpkg rather than
+             *       implementing from scratch. See docs/reactos-ob-comparison.md §3.
+             */
             std::unique_ptr<registry> next;
         };
 

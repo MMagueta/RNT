@@ -20,6 +20,22 @@ namespace nt
      * Permission checks are intentionally separated from lookup. The object
      * manager can retrieve a candidate object, while this manager decides
      * whether the caller is allowed to use it.
+     *
+     * Permissions are strictly capability-based and must be explicitly granted.
+     * There is no implicit flow of access rights from a parent namespace entry to
+     * its children (no SD inheritance). A caller who holds READ on a multigroup
+     * does not thereby hold READ on its constituent relations — that is a separate,
+     * explicit capability.
+     *
+     * @todo Define a security_descriptor structure. Store instances in a shared,
+     *       content-addressed cache (keyed by descriptor content, not by namespace
+     *       ancestry) so that identical ACLs are not duplicated across relations.
+     *       See docs/reactos-ob-comparison.md §5 and §7.
+     *
+     * @todo Cache the result of Access() in HandlerManager::handle::granted_access
+     *       at open time. Per-operation checks should then read from the handle
+     *       rather than re-evaluating the descriptor on every call.
+     *       See docs/reactos-ob-comparison.md §4.
      */
     class NT_API PermissionsManager
     {

@@ -10,53 +10,92 @@
 
 namespace nt
 {
-    /** @brief Manages runtime lifecycle concerns for registry objects. */
+    /**
+     * @brief Manages runtime lifecycle concerns for registry objects.
+     *
+     * Object lifetime is governed by two independent counters in registry_head:
+     * `handle_count` (sessions holding an open handle) and `reference_count`
+     * (structural dependencies such as cursors pinned to a snapshot or views
+     * referencing base relations). An object is eligible for GC only when both
+     * reach zero.
+     *
+     * Monitor / Unmonitor manage `handle_count`. Pin / Unpin manage
+     * `reference_count`. See docs/reactos-ob-comparison.md §1.
+     */
     class NT_API LifecycleManager
     {
     public:
         /**
          * @brief Starts monitoring an object's lifecycle.
          *
-         * If the object is not being monitored already, monitor the lifecycle
-         * by updating the handle count. Maybe also look at the reference count
-         * and kill some categories of disposable objects no longer referenced
-         * by other objects, like transactions.
-         *
-         * One use case is preventing compaction/pruning of history while
-         * cursors depend on old database snapshots, for example. Think of
-         * other use cases later.
+         * Increments `handle_count` on the object's registry_head. Should be
+         * called after all authorization checks pass inside HandlerManager::Open.
          *
          * @param object Object to monitor.
          */
         void Monitor(ObjectManager::registry* object);
 
         /**
-         * @brief Serializes contention for changes to mutable references.
+         * @brief Stops monitoring an object.
          *
-         * This can be used for the HEAD of a branch to serialize access. If the
-         * object does not cause contention, such as a relation, then this can
-         * approve the operation because relations and multigroups are immutable
-         * snapshots. Transactions also do not cause contention.
+         * Decrements `handle_count`. When both `handle_count` and
+         * `reference_count` reach zero, the object becomes eligible for GC.
          *
-         * The objects that do cause contention are mutable reference states in
-         * shared sessions. Examples include the HEAD of a branch, namespace
-         * collisions, multi-branch atomic commits (which may damage isolation),
-         * and garbage collection of old state when old-enough history is removed
-         * to save space.
+         * @todo Gate GC on both counters reaching zero, not just handle_count.
+         *       For deferred compaction, enqueue onto a background GC list rather
+         *       than freeing inline. See docs/reactos-ob-comparison.md §1 and §7.
+         *
+         * @param object Object to stop monitoring.
+         */
+        void Unmonitor(ObjectManager::registry* object);
+
+        /**
+         * @brief Increments the structural dependency count on an object.
+         *
+         * Call when one object takes a dependency on another — for example when
+         * a cursor pins an immutable snapshot version, or when a view is
+         * registered against its base relations. Prevents GC of the target object
+         * while the dependency is live.
+         *
+         * @todo Implement. See docs/reactos-ob-comparison.md §1.
+         *
+         * @param object Object being depended upon.
+         */
+        void Pin(ObjectManager::registry* object);
+
+        /**
+         * @brief Decrements the structural dependency count on an object.
+         *
+         * The inverse of Pin. When both `reference_count` and `handle_count`
+         * reach zero the object becomes eligible for GC.
+         *
+         * @todo Implement. See docs/reactos-ob-comparison.md §1.
+         *
+         * @param object Object whose dependency is being released.
+         */
+        void Unpin(ObjectManager::registry* object);
+
+        /**
+         * @brief Serializes contention for changes to mutable reference states.
+         *
+         * Immutable objects — relation snapshots, multigroup snapshots,
+         * transactions — never raise contention. Two sessions opening the same
+         * immutable snapshot simultaneously is always safe; they will produce
+         * independent results without conflict.
+         *
+         * Contention applies only to mutable reference states: the HEAD of a
+         * branch and namespace entries targeted by atomic multi-reference updates.
+         * These are the sole mutable pointers in the system. When a session holds
+         * a write handle on a HEAD, a second write opener must block or fail.
+         *
+         * @todo Implement: read `object_type::exclusive`. Return false immediately
+         *       for non-exclusive objects. For exclusive objects, return false
+         *       (contention detected) when `handle_count > 0` for a write-mode
+         *       opener. See docs/reactos-ob-comparison.md §6.
          *
          * @param object Object to check for contention.
          * @return True when the operation may proceed.
          */
         const bool Contention(ObjectManager::registry* object);
-
-        /**
-         * @brief Stops monitoring an object.
-         *
-         * The inverse of Monitor. Maybe garbage collect here also if the
-         * counters go to zero.
-         *
-         * @param object Object to stop monitoring.
-         */
-        void Unmonitor(ObjectManager::registry* object);
     };
 }
