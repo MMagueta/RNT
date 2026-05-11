@@ -1,4 +1,5 @@
 #include "CursorManager.h"
+#include "ObjectManager.h"
 #include "TupleCodec.h"
 
 namespace nt
@@ -29,7 +30,20 @@ namespace nt
     {
         if (handle == nullptr || handle->object == nullptr)
             return nullptr;
-        if (handle->object->head->type->label != RELATION)
+
+        const auto label = handle->object->head->type->label;
+
+        if (label == EPHEMERAL_RELATION)
+        {
+            // Cursor is created exhausted — the JOIN operator writes args and
+            // resets the state before the first probe.
+            auto* c = new cursor();
+            c->handle = handle;
+            c->exhausted = true;
+            return c;
+        }
+
+        if (label != RELATION)
             return nullptr;
 
         auto* c = new cursor();
@@ -53,9 +67,21 @@ namespace nt
 
         if (c->exhausted) return nullptr;
 
+        if (c->handle->object->head->type->label == EPHEMERAL_RELATION)
+        {
+            auto* etype = static_cast<ObjectManager::ephemeral_object_type*>(
+                c->handle->object->head->type.get());
+            c->page = etype->generator(c->args, c->fetch_offset, PAGE_SIZE);
+            c->page_position = 0;
+            c->fetch_offset += c->page.size();
+            if (c->page.size() < PAGE_SIZE)
+                c->exhausted = true;
+            if (c->page.empty()) return nullptr;
+            return &c->page[c->page_position++];
+        }
+
         LoadPage(c, c->handle->object->head->path);
         if (c->page.empty()) return nullptr;
-
         return &c->page[c->page_position++];
     }
 

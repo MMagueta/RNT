@@ -12,12 +12,19 @@
 enum OBJECT_TYPE {
     /** A database snapshot grouping relations and tuples. */
     MULTIGROUP,
-    /** A relation object. */
+    /** A relation object backed by physical storage. */
     RELATION,
     /** An attribute object (schema metadata). */
     ATTRIBUTE,
     /** A transaction object. */
-    TRANSACTION
+    TRANSACTION,
+    /**
+     * A relation whose tuples are produced on demand by a generator function
+     * rather than read from physical storage. Cardinality may be finite (e.g.
+     * a projected stored relation) or AlephZero (e.g. the eq builtin). The
+     * object_type for this label must be an ephemeral_object_type.
+     */
+    EPHEMERAL_RELATION
 };
 
 /** @brief Operations that may be supported by an object type. */
@@ -75,6 +82,9 @@ namespace nt
         }
 
         void Reset() { position_ = 0; }
+
+        /** @brief Direct read-only access to all attributes without affecting position. */
+        const std::vector<Attribute>& attrs() const { return attributes_; }
 
     private:
         std::vector<Attribute> attributes_;

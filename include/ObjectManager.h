@@ -4,6 +4,7 @@
 #include "Types.h"
 
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <set>
 #include <string>
@@ -73,6 +74,44 @@ namespace nt
              * @todo Wire into LifecycleManager::Contention.
              */
             bool exclusive = false;
+
+            virtual ~object_type() = default;
+        };
+
+        /**
+         * @brief Object type descriptor for EPHEMERAL_RELATION objects.
+         *
+         * An ephemeral relation has no physical storage. Its tuples are produced
+         * on demand by a generator function. Cardinality may be finite (e.g. a
+         * projected stored relation) or AlephZero (e.g. the eq/lt builtins).
+         *
+         * The generator receives the bound argument values that were written into
+         * the cursor by the JOIN operator before each probe, together with a
+         * pagination offset and limit. It must return at most `limit` tuples
+         * starting at logical position `offset`.
+         *
+         * For membership-probe builtins (all args ground), the generator returns
+         * at most one tuple. For enumeration over AlephZero relations the generator
+         * maps `offset` to the appropriate pair via a bijective enumeration scheme
+         * (e.g. Cantor pairing); callers must bound such scans with a TAKE node.
+         */
+        struct NT_API ephemeral_object_type : object_type
+        {
+            enum class Cardinality { Finite, ConstrainedFinite, AlephZero, Continuum };
+
+            /**
+             * @brief Produces a page of tuples for the given bound arguments.
+             * @param args   Bound argument values written by the JOIN before probing.
+             * @param offset Zero-based logical tuple offset (for pagination).
+             * @param limit  Maximum number of tuples to return.
+             */
+            using Generator = std::function<std::vector<Tuple>(
+                const std::vector<std::string>& args,
+                std::size_t offset,
+                std::size_t limit)>;
+
+            Cardinality cardinality;
+            Generator   generator;
         };
 
         /**

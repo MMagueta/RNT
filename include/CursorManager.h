@@ -46,6 +46,12 @@ namespace nt
          */
         struct cursor {
             HandlerManager::handle* handle = nullptr;
+            /**
+             * Bound argument values for EPHEMERAL_RELATION cursors.
+             * Written by the JOIN operator before each probe; ignored for
+             * stored RELATION cursors.
+             */
+            std::vector<std::string> args;
             std::vector<Tuple> page;
             std::size_t page_position = 0;
             std::size_t fetch_offset  = 0;   // next TupleHashes() call starts here

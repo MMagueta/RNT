@@ -13,6 +13,7 @@ project ("RelationalNT")
 
 find_package(unofficial-sqlite3 CONFIG REQUIRED)
 find_path(PICOSHA2_INCLUDE_DIRS "picosha2.h")
+find_package(Catch2 3 REQUIRED)
 
 # Add source to this project's executable.
 add_executable (RelationalNT
@@ -40,4 +41,30 @@ endif()
 target_link_libraries(RelationalNT PRIVATE unofficial::sqlite3::sqlite3)
 target_include_directories(RelationalNT PRIVATE ${PICOSHA2_INCLUDE_DIRS})
 
-# TODO: Add tests and install targets if needed.
+enable_testing()
+
+set(RNT_CORE_SOURCES
+    "src/ObjectManager.cpp"
+    "src/PermissionsManager.cpp"
+    "src/IdentityManager.cpp"
+    "src/LifecycleManager.cpp"
+    "src/HandlerManager.cpp"
+    "src/CursorManager.cpp"
+    "src/TupleCodec.cpp"
+    "src/InMemoryBackend.cpp"
+    "src/NamespaceReferenceManager.cpp"
+    "src/VM.cpp"
+)
+
+add_executable(RNT_tests
+    "test/VM.cpp"
+    ${RNT_CORE_SOURCES}
+)
+target_include_directories(RNT_tests PRIVATE "include")
+target_include_directories(RNT_tests PRIVATE ${PICOSHA2_INCLUDE_DIRS})
+target_compile_definitions(RNT_tests PRIVATE NT_CONSOLE_APP)
+target_link_libraries(RNT_tests PRIVATE Catch2::Catch2WithMain)
+set_property(TARGET RNT_tests PROPERTY CXX_STANDARD 20)
+
+include(Catch)
+catch_discover_tests(RNT_tests DISCOVERY_MODE PRE_TEST)

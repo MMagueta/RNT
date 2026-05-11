@@ -4,6 +4,10 @@
 #include "CursorManager.h"
 #include "Types.h"
 
+#include <optional>
+#include <string>
+#include <vector>
+
 /**
  * @file VM.h
  * @brief Declares the logic execution boundary for relational and higher-order workloads.
@@ -47,24 +51,87 @@ namespace nt
      *   snapshots pinned through LifecycleManager::Monitor only for the minimum
      *   time required.
      */
+
+    /**
+     * @brief One segment of a parameterized relation path in a SCAN node.
+     *
+     * Var segments are resolved at runtime from the outer tuple of a JOIN:
+     * the JOIN writes the bound value into the cursor's args vector before
+     * each probe. Const segments are ground literals fixed at plan construction.
+     *
+     * The resolved args vector is passed to the ephemeral relation's generator
+     * (for EPHEMERAL_RELATION cursors) or ignored (for stored RELATION cursors,
+     * which need no per-probe parameterization).
+     */
+    struct NT_API PathArg
+    {
+        enum class Kind { Var, Const };
+
+        Kind        kind;
+        std::string name; /**< Attribute name to look up (Var), or literal value (Const). */
+
+        static PathArg Var(std::string attr)  { return { Kind::Var,   std::move(attr) }; }
+        static PathArg Const(std::string val) { return { Kind::Const, std::move(val) }; }
+    };
+
     /**
      * @brief A node in the Volcano operator tree executed by the Tarski (FOL) runtime.
      *
      * Each node represents one relational algebra operator. The tree is demand-driven:
      * VM::Next() propagates pull requests from root to leaves.
      *
-     * TODO: Add FILTER, PROJECT, and JOIN operators as the query layer grows.
+     * Supported operators:
+     * - SCAN  : pulls tuples from a pre-opened cursor (stored or ephemeral relation).
+     * - JOIN  : nested-loop join. For each outer (left) tuple, resolves scan_args on
+     *           the inner (right) SCAN, resets its cursor, and probes it. Works for
+     *           both stored relations (full re-scan of inner) and ephemeral relations
+     *           (O(1) membership probe when all args are bound).
+     * - TAKE  : passes at most take_limit tuples through, then returns nullptr. Use
+     *           this to bound scans over AlephZero ephemeral relations.
+     *
+     * TODO: Add PROJECT operator as the query layer grows.
      */
     struct NT_API PlanNode
     {
-        enum class Op { SCAN };
+        enum class Op { SCAN, JOIN, TAKE };
 
-        Op op;
-        PlanNode* left  = nullptr;  /**< Left child (binary operators). */
-        PlanNode* right = nullptr;  /**< Right child (binary operators). */
+        Op        op;
+        PlanNode* left  = nullptr;
+        PlanNode* right = nullptr;
 
-        /** Cursor to scan. Set when op == SCAN. */
+        /**
+         * SCAN: pre-opened cursor. For ephemeral relations this cursor is
+         * initially exhausted; the JOIN resets it with resolved args before
+         * each probe.
+         */
         CursorManager::cursor* scan_cursor = nullptr;
+
+        /**
+         * SCAN: argument template for parameterized relations.
+         * Var entries are resolved from the outer JOIN tuple; Const entries
+         * are used as-is. The resolved values are written into scan_cursor->args
+         * by the JOIN before it calls Next() on this node.
+         */
+        std::vector<PathArg> scan_args;
+
+        /** TAKE: maximum number of tuples to emit before returning nullptr. */
+        std::size_t take_limit = 0;
+        std::size_t take_count = 0; /**< Runtime counter; mutable during execution. */
+
+        /**
+         * JOIN runtime state.
+         *
+         * join_left holds the current outer tuple while probing the inner
+         * (right) side. The pointer is stable for the lifetime of one outer
+         * iteration because Next(left) is only called when join_left is reset
+         * to nullptr, which happens only after the inner side is exhausted.
+         *
+         * join_buffer holds the merged output tuple and is overwritten on each
+         * successful join. Callers must consume the returned pointer before
+         * calling Next() again — same contract as a cursor page pointer.
+         */
+        Tuple*               join_left   = nullptr;
+        std::optional<Tuple> join_buffer;
     };
 
     class NT_API VM
@@ -82,8 +149,13 @@ namespace nt
         /**
          * @brief Pulls the next tuple from the plan tree (Tarski/FOL core).
          *
-         * Propagates a Next() call down the operator tree. The call chain
-         * terminates at a SCAN node, which delegates to CursorManager.
+         * Propagates a Next() call down the operator tree:
+         * - SCAN  delegates to CursorManager::Next.
+         * - JOIN  drives the nested-loop: for each outer tuple it resolves
+         *         scan_args on the inner SCAN, resets the inner cursor, and
+         *         probes until a match is found or the inner is exhausted.
+         * - TAKE  counts emitted tuples and returns nullptr once the limit
+         *         is reached.
          *
          * @param node Root of the plan subtree to evaluate.
          * @return Next matching tuple, or nullptr when the plan is exhausted.
@@ -92,5 +164,19 @@ namespace nt
 
     private:
         CursorManager& cursors_;
+
+        /**
+         * Resolves a scan_args template against an outer tuple, producing the
+         * concrete args vector to write into the inner cursor before probing.
+         */
+        static std::vector<std::string> ResolveArgs(const std::vector<PathArg>& tmpl,
+                                                    Tuple* from);
+
+        /** Resets the inner cursor state and writes resolved args into it. */
+        static void ResetInner(CursorManager::cursor* c,
+                               std::vector<std::string> args);
+
+        /** Merges left and right tuple attributes into node->join_buffer. */
+        static Tuple* MergeInto(PlanNode* node, Tuple* left, Tuple* right);
     };
 }
