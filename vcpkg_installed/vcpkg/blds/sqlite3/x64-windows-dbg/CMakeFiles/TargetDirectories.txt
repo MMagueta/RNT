@@ -1,6 +1,0 @@
-C:/Users/mague/source/repos/RelationalNT/vcpkg_installed/vcpkg/blds/sqlite3/x64-windows-dbg/CMakeFiles/sqlite3.dir
-C:/Users/mague/source/repos/RelationalNT/vcpkg_installed/vcpkg/blds/sqlite3/x64-windows-dbg/CMakeFiles/edit_cache.dir
-C:/Users/mague/source/repos/RelationalNT/vcpkg_installed/vcpkg/blds/sqlite3/x64-windows-dbg/CMakeFiles/rebuild_cache.dir
-C:/Users/mague/source/repos/RelationalNT/vcpkg_installed/vcpkg/blds/sqlite3/x64-windows-dbg/CMakeFiles/list_install_components.dir
-C:/Users/mague/source/repos/RelationalNT/vcpkg_installed/vcpkg/blds/sqlite3/x64-windows-dbg/CMakeFiles/install.dir
-C:/Users/mague/source/repos/RelationalNT/vcpkg_installed/vcpkg/blds/sqlite3/x64-windows-dbg/CMakeFiles/install/local.dir

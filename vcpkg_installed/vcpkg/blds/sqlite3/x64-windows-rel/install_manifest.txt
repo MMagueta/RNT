@@ -1,8 +1,0 @@
-C:/Users/mague/source/repos/RelationalNT/vcpkg_installed/vcpkg/pkgs/sqlite3_x64-windows/lib/sqlite3.lib
-C:/Users/mague/source/repos/RelationalNT/vcpkg_installed/vcpkg/pkgs/sqlite3_x64-windows/bin/sqlite3.dll
-C:/Users/mague/source/repos/RelationalNT/vcpkg_installed/vcpkg/pkgs/sqlite3_x64-windows/include/sqlite3.h
-C:/Users/mague/source/repos/RelationalNT/vcpkg_installed/vcpkg/pkgs/sqlite3_x64-windows/include/sqlite3ext.h
-C:/Users/mague/source/repos/RelationalNT/vcpkg_installed/vcpkg/pkgs/sqlite3_x64-windows/include/sqlite3-vcpkg-config.h
-C:/Users/mague/source/repos/RelationalNT/vcpkg_installed/vcpkg/pkgs/sqlite3_x64-windows/share/unofficial-sqlite3/unofficial-sqlite3-targets.cmake
-C:/Users/mague/source/repos/RelationalNT/vcpkg_installed/vcpkg/pkgs/sqlite3_x64-windows/share/unofficial-sqlite3/unofficial-sqlite3-targets-release.cmake
-C:/Users/mague/source/repos/RelationalNT/vcpkg_installed/vcpkg/pkgs/sqlite3_x64-windows/lib/pkgconfig/sqlite3.pc

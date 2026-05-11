@@ -34,4 +34,4 @@ libRNT.dylib
 docs/generated/
 
 # vcpkg manifest mode artifacts
-vcpkg_installed/
+vcpkg_installed
