@@ -177,23 +177,60 @@ int rnt_link_tuple(const char* relation_path,
                    char**      hash_out);
 
 /**
- * @brief Computes the Merkle root hash of all tuple hashes for a relation.
+ * @brief Removes a tuple from the relation's Merkle tree and tuple store.
  *
- * Reads tuple hashes from the storage backend in sorted (tuple_hash ASC) order
- * and hashes them incrementally into a single root hash. The result is
- * deterministic regardless of insertion order: it depends only on the set of
- * tuples currently linked to the relation.
- *
- * The Merkle construction is a flat SHA-256 over the sorted, concatenated
- * tuple hash hex strings. For an empty relation the result is the SHA-256 of
- * an empty byte string.
+ * Calls Merkle::Remove on the relation's current root and updates
+ * ObjectManager::Relation::merkle_root atomically.  The tuple bytes remain in
+ * the KV store (they may be referenced by older snapshots); only the
+ * membership in the current tree is removed.
  *
  * @param relation_path  Slash-separated relation path.
- * @param root_hash_out  Set to the 64-character hex root hash.
- *                       Release with rnt_free_string().
- * @return 0 on success, negative on error.
+ * @param tuple_hash     64-character hex SHA-256 of the tuple to remove.
+ * @return 0 on success, negative when the relation is not found.
  */
-int rnt_relation_merkle_root(const char* relation_path, char** root_hash_out);
+int rnt_unlink_tuple(const char* relation_path, const char* tuple_hash);
+
+/**
+ * @brief Resets a relation's Merkle root to the empty-tree state.
+ *
+ * Sets ObjectManager::Relation::merkle_root to the empty string.  Existing
+ * tuple bytes remain in the KV store.  After this call the relation contains
+ * no tuples from the perspective of cursor iteration.
+ *
+ * @param relation_path  Slash-separated relation path.
+ * @return 0 on success, negative when the relation is not found.
+ */
+int rnt_clear_relation(const char* relation_path);
+
+/**
+ * @brief Returns the current Merkle root hash for a relation.
+ *
+ * OCaml calls this after rnt_link_tuple or rnt_unlink_tuple to read the
+ * updated root back and store it in the in-memory multigroup (tree_pointer).
+ * An empty string is returned for a relation that contains no tuples.
+ *
+ * @param relation_path  Slash-separated relation path.
+ * @param root_hash_out  Set to the 64-character hex root hash, or to an empty
+ *                       heap-allocated string for an empty relation.
+ *                       Release with rnt_free_string().
+ * @return 0 on success, negative when the relation is not found.
+ */
+int rnt_relation_root(const char* relation_path, char** root_hash_out);
+
+/**
+ * @brief Writes a Merkle root hash into a relation's ObjectManager entry.
+ *
+ * Called by Sakura's open_branch during multigroup reconstruction: after
+ * deserializing the branch payload, OCaml calls this function once per
+ * relation to restore the persisted Merkle root into the in-memory
+ * ObjectManager so that subsequent cursors see the correct tuple set.
+ *
+ * @param relation_path  Slash-separated relation path.
+ * @param root_hash      64-character hex Merkle root, or empty string to mark
+ *                       the relation as empty.
+ * @return 0 on success, negative when the relation is not found.
+ */
+int rnt_set_relation_root(const char* relation_path, const char* root_hash);
 
 /* ------------------------------------------------------------------ */
 /* Cursor and VM                                                        */

@@ -6,6 +6,7 @@
 #include "Types.h"
 
 #include <cstddef>
+#include <string>
 #include <vector>
 
 /**
@@ -25,6 +26,11 @@ namespace nt
      * Tuples are never loaded all at once. Open() fetches the first page;
      * each subsequent Next() call transparently fetches the next page from
      * the backend once the current page is exhausted.
+     *
+     * Pagination is driven by the Merkle B-tree: each cursor carries the hex
+     * hash of the relation's Merkle root at open time, and LoadPage calls
+     * Merkle::Page(backend, merkle_root, fetch_offset, PAGE_SIZE) to retrieve
+     * the next page of tuple hashes without loading sibling subtrees.
      */
     class NT_API CursorManager
     {
@@ -43,9 +49,18 @@ namespace nt
          *
          * The pointer returned by Next() is valid only until the next Next()
          * or Close() call — a page replacement invalidates all prior pointers.
+         *
+         * merkle_root is seeded from ObjectManager::Relation::merkle_root at
+         * open time and does not change during iteration; the cursor reads the
+         * snapshot captured when it was opened.
          */
         struct cursor {
             HandlerManager::handle* handle = nullptr;
+            /**
+             * Hex hash of the relation's Merkle B-tree root node.
+             * Empty string means the relation contains no tuples.
+             */
+            std::string merkle_root;
             /**
              * Bound argument values for EPHEMERAL_RELATION cursors.
              * Written by the JOIN operator before each probe; ignored for
@@ -54,17 +69,24 @@ namespace nt
             std::vector<std::string> args;
             std::vector<Tuple> page;
             std::size_t page_position = 0;
-            std::size_t fetch_offset  = 0;   // next TupleHashes() call starts here
+            std::size_t fetch_offset  = 0;   // next Merkle::Page() call starts here
             bool exhausted = false;
         };
 
         /**
          * @brief Opens a cursor on the relation referenced by the handle.
          *
-         * Fetches the first page immediately. Returns nullptr if the relation
-         * has no tuples or the handle does not refer to a RELATION.
+         * Fetches the first page immediately for non-empty relations. Returns
+         * a valid exhausted cursor when @p merkle_root is empty (empty relation).
+         * Returns nullptr when the handle does not refer to a RELATION or
+         * EPHEMERAL_RELATION.
+         *
+         * @param handle       Open RELATION or EPHEMERAL_RELATION handle.
+         * @param merkle_root  Hex hash of the relation's Merkle root at open
+         *                     time. Ignored for EPHEMERAL_RELATION handles.
          */
-        cursor* Open(HandlerManager::handle* handle);
+        cursor* Open(HandlerManager::handle* handle,
+                     const std::string& merkle_root = "");
 
         /**
          * @brief Pulls the next tuple from the cursor.
@@ -83,8 +105,12 @@ namespace nt
     private:
         IStorageBackend& backend_;
 
-        /** Fetches a page of hashes, resolves each from the KV store, and
-         *  deserializes them into cursor->page. Clears the existing page. */
-        void LoadPage(cursor* c, const std::vector<std::string>& path);
+        /**
+         * Fetches a page of hashes via Merkle::Page, resolves each from the
+         * KV store, and deserializes them into cursor->page. Clears the
+         * existing page.  Advances fetch_offset by the number of hashes
+         * returned; sets exhausted when fewer than PAGE_SIZE hashes come back.
+         */
+        void LoadPage(cursor* c);
     };
 }

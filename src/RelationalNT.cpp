@@ -5,6 +5,7 @@
 #include "HandlerManager.h"
 #include "IdentityManager.h"
 #include "LifecycleManager.h"
+#include "Merkle.h"
 #include "ObjectManager.h"
 #include "PermissionsManager.h"
 #include "SqliteBackend.h"
@@ -40,15 +41,17 @@ int main()
     type->disposable = false;
     type->methods = { OPEN, CLOSE };
 
-    objects.Register({ "multigroups", "sakura", "relations", "villager" }, std::make_unique<nt::ObjectManager::Relation>(), std::move(type));
-
-    // --- Populate SQLite backend with three tuples ---
-    nt::SqliteBackend backend;
     const std::vector<std::string> path = { "multigroups", "sakura", "relations", "villager" };
+    auto* villager_rel = new nt::ObjectManager::Relation();
+    objects.Register(path, std::unique_ptr<nt::ObjectManager::Relation>(villager_rel), std::move(type));
+
+    // --- Populate backend with three tuples via the Merkle tree ---
+    nt::SqliteBackend backend;
     auto store = [&](std::vector<nt::Attribute> attrs) {
         auto bytes = nt::TupleCodec::Serialize(attrs);
-        auto hash  = backend.Put(bytes);
-        backend.LinkTuple(path, hash);
+        auto hash  = backend.Put(std::move(bytes));
+        villager_rel->merkle_root =
+            nt::Merkle::Insert(backend, villager_rel->merkle_root, hash);
     };
     store({ { "name", "Blathers" }, { "profession", "Museum Curator" } });
     store({ { "name", "Rover"   }, { "profession", "Traveller" } });
@@ -62,7 +65,7 @@ int main()
     nt::HandlerManager handler(objects, permissions, identities, lifecycles);
 
     int connection = 1;  // dummy connection context
-    nt::HandlerManager::handle* handle = handler.Open({ "multigroups", "sakura", "relations", "villager" }, &connection);
+    nt::HandlerManager::handle* handle = handler.Open(path, &connection);
     if (handle == nullptr)
     {
         std::cout << "Failed to open handle for villager\n";
@@ -70,7 +73,7 @@ int main()
     }
 
     // --- Open a cursor on the relation ---
-    nt::CursorManager::cursor* cursor = cursors.Open(handle);
+    nt::CursorManager::cursor* cursor = cursors.Open(handle, villager_rel->merkle_root);
     if (cursor == nullptr)
     {
         std::cout << "Failed to open cursor for villager\n";

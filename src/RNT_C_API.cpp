@@ -4,6 +4,7 @@
 #include "HandlerManager.h"
 #include "IdentityManager.h"
 #include "LifecycleManager.h"
+#include "Merkle.h"
 #include "ObjectManager.h"
 #include "PermissionsManager.h"
 #include "InMemoryBackend.h"
@@ -196,6 +197,17 @@ int rnt_init(const char* driver, const char* storage_path)
                 rt->objects, rt->permissions, rt->identities, rt->lifecycles);
             rt->cursors = std::make_unique<nt::CursorManager>(*rt->storage);
             g_rt = std::move(rt);
+
+            // Register the default branch on first boot so that
+            // rnt_open_handle("/system/branches/master") always succeeds.
+            const auto main_path = split_path("/system/branches/master");
+            if (g_rt->objects.Find(main_path) == nullptr)
+            {
+                auto branch  = std::make_unique<nt::ObjectManager::Branch>();
+                branch->name = "master";
+                g_rt->objects.Register(main_path, std::move(branch),
+                                       make_branch_type());
+            }
         }
         catch (...)
         {
@@ -287,41 +299,64 @@ int rnt_register_branch(const char* path, const uint8_t* payload, size_t payload
     return 0;
 }
 
+// Looks up the Relation object for a path; returns nullptr when not found or wrong type.
+static nt::ObjectManager::Relation* find_relation(const std::vector<std::string>& parts)
+{
+    auto* entry = g_rt->objects.Find(parts);
+    if (!entry || !entry->object) return nullptr;
+    return dynamic_cast<nt::ObjectManager::Relation*>(entry->object.get());
+}
+
 int rnt_link_tuple(const char* relation_path, const char* kv_attrs, char** hash_out)
 {
     if (!is_init() || !relation_path || !kv_attrs || !hash_out) return -1;
     const auto parts = split_path(relation_path);
-    auto bytes       = nt::TupleCodec::Serialize(parse_kv(kv_attrs));
-    const auto hash  = g_rt->storage->Put(std::move(bytes));
-    g_rt->storage->LinkTuple(parts, hash);
+
+    auto* rel = find_relation(parts);
+    if (!rel) return -1;
+
+    auto bytes      = nt::TupleCodec::Serialize(parse_kv(kv_attrs));
+    const auto hash = g_rt->storage->Put(std::move(bytes));
+
+    rel->merkle_root = nt::Merkle::Insert(*g_rt->storage, rel->merkle_root, hash);
+
     *hash_out = heap_str(hash);
     return 0;
 }
 
-int rnt_relation_merkle_root(const char* relation_path, char** root_hash_out)
+int rnt_unlink_tuple(const char* relation_path, const char* tuple_hash)
+{
+    if (!is_init() || !relation_path || !tuple_hash) return -1;
+    auto* rel = find_relation(split_path(relation_path));
+    if (!rel) return -1;
+    rel->merkle_root = nt::Merkle::Remove(*g_rt->storage, rel->merkle_root, tuple_hash);
+    return 0;
+}
+
+int rnt_clear_relation(const char* relation_path)
+{
+    if (!is_init() || !relation_path) return -1;
+    auto* rel = find_relation(split_path(relation_path));
+    if (!rel) return -1;
+    rel->merkle_root.clear();
+    return 0;
+}
+
+int rnt_relation_root(const char* relation_path, char** root_hash_out)
 {
     if (!is_init() || !relation_path || !root_hash_out) return -1;
+    auto* rel = find_relation(split_path(relation_path));
+    if (!rel) return -1;
+    *root_hash_out = heap_str(rel->merkle_root);
+    return 0;
+}
 
-    const auto parts = split_path(relation_path);
-
-    // Page through all tuple hashes in sorted order (ORDER BY tuple_hash in
-    // SqliteBackend) and hash them into a single deterministic root.
-    constexpr std::size_t PAGE = 512;
-    std::size_t offset = 0;
-    std::vector<uint8_t> accumulator;
-
-    for (;;)
-    {
-        auto page = g_rt->storage->TupleHashes(parts, offset, PAGE);
-        if (page.empty()) break;
-        for (const auto& h : page)
-            accumulator.insert(accumulator.end(), h.begin(), h.end());
-        offset += page.size();
-        if (page.size() < PAGE) break;
-    }
-
-    *root_hash_out = heap_str(
-        picosha2::hash256_hex_string(accumulator.begin(), accumulator.end()));
+int rnt_set_relation_root(const char* relation_path, const char* root_hash)
+{
+    if (!is_init() || !relation_path) return -1;
+    auto* rel = find_relation(split_path(relation_path));
+    if (!rel) return -1;
+    rel->merkle_root = root_hash ? root_hash : "";
     return 0;
 }
 
@@ -329,7 +364,16 @@ rnt_cursor_t rnt_cursor_open(rnt_handle_t handle)
 {
     if (!is_init() || !handle) return nullptr;
     auto* h = static_cast<nt::HandlerManager::handle*>(handle);
-    return g_rt->cursors->Open(h);
+
+    std::string merkle_root;
+    if (h->object && h->object->head &&
+        h->object->head->type->label == RELATION)
+    {
+        auto* rel = find_relation(h->object->head->path);
+        if (rel) merkle_root = rel->merkle_root;
+    }
+
+    return g_rt->cursors->Open(h, merkle_root);
 }
 
 int rnt_cursor_next(rnt_cursor_t cursor, char** tuple_out)
@@ -371,7 +415,12 @@ rnt_plan_t rnt_plan_scan(const char* relation_path)
     auto* h = g_rt->handler->Open(parts, nullptr);
     if (!h) return nullptr;
 
-    auto* c = g_rt->cursors->Open(h);
+    // Seed the cursor with the current Merkle root from the ObjectManager.
+    std::string merkle_root;
+    auto* rel = find_relation(parts);
+    if (rel) merkle_root = rel->merkle_root;
+
+    auto* c = g_rt->cursors->Open(h, merkle_root);
     if (!c)
     {
         g_rt->handler->Close(h);

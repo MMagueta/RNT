@@ -5,6 +5,7 @@
 #include "IdentityManager.h"
 #include "InMemoryBackend.h"
 #include "LifecycleManager.h"
+#include "Merkle.h"
 #include "ObjectManager.h"
 #include "PermissionsManager.h"
 #include "TupleCodec.h"
@@ -18,13 +19,20 @@
 // Helpers
 // ---------------------------------------------------------------------------
 
+// Stores a tuple in the backend and updates the Relation object's Merkle root.
 static void store_tuple(nt::InMemoryBackend& backend,
+                        nt::ObjectManager& objects,
                         const std::vector<std::string>& path,
                         std::vector<nt::Attribute> attrs)
 {
     auto bytes = nt::TupleCodec::Serialize(attrs);
     auto hash  = backend.Put(std::move(bytes));
-    backend.LinkTuple(path, hash);
+
+    auto* entry = objects.Find(path);
+    if (!entry) return;
+    auto* rel = dynamic_cast<nt::ObjectManager::Relation*>(entry->object.get());
+    if (!rel) return;
+    rel->merkle_root = nt::Merkle::Insert(backend, rel->merkle_root, hash);
 }
 
 static std::unique_ptr<nt::ObjectManager::object_type> make_relation_type()
@@ -82,12 +90,13 @@ TEST_CASE("SCAN returns all tuples from a stored relation", "[scan]")
     const std::vector<std::string> path = { "relations", "villager" };
 
     f.objects.Register(path, std::make_unique<nt::ObjectManager::Relation>(), make_relation_type());
-    store_tuple(f.backend, path, { { "name", "John" }, { "age", "30" } });
-    store_tuple(f.backend, path, { { "name", "Peter"   }, { "age", "25" } });
+    store_tuple(f.backend, f.objects, path, { { "name", "John"  }, { "age", "30" } });
+    store_tuple(f.backend, f.objects, path, { { "name", "Peter" }, { "age", "25" } });
 
     auto* handle = f.handler.Open(path, &f.conn);
     REQUIRE(handle != nullptr);
-    auto* cursor = f.cursors.Open(handle);
+    auto* rel = dynamic_cast<nt::ObjectManager::Relation*>(f.objects.Find(path)->object.get());
+    auto* cursor = f.cursors.Open(handle, rel->merkle_root);
     REQUIRE(cursor != nullptr);
 
     nt::PlanNode plan;
@@ -115,9 +124,9 @@ TEST_CASE("JOIN filters a stored relation with eq ephemeral", "[join]")
                        std::make_unique<nt::ObjectManager::Relation>(),
                        make_relation_type());
 
-    store_tuple(f.backend, people_path, { { "name", "John"  }, { "age", "30" } });
-    store_tuple(f.backend, people_path, { { "name", "Peter" }, { "age", "25" } });
-    store_tuple(f.backend, people_path, { { "name", "Jude"  }, { "age", "25" } });
+    store_tuple(f.backend, f.objects, people_path, { { "name", "John"  }, { "age", "30" } });
+    store_tuple(f.backend, f.objects, people_path, { { "name", "Peter" }, { "age", "25" } });
+    store_tuple(f.backend, f.objects, people_path, { { "name", "Jude"  }, { "age", "25" } });
 
     // Register ephemeral eq relation
     f.objects.Register(eq_path,
@@ -130,9 +139,11 @@ TEST_CASE("JOIN filters a stored relation with eq ephemeral", "[join]")
     auto* eq_handle = f.handler.Open(eq_path, &f.conn);
     REQUIRE(eq_handle != nullptr);
 
-    auto* people_cursor = f.cursors.Open(people_handle);
+    auto* people_rel = dynamic_cast<nt::ObjectManager::Relation*>(
+        f.objects.Find(people_path)->object.get());
+    auto* people_cursor = f.cursors.Open(people_handle, people_rel->merkle_root);
     REQUIRE(people_cursor != nullptr);
-    auto* eq_cursor = f.cursors.Open(eq_handle); // starts exhausted — JOIN resets it
+    auto* eq_cursor = f.cursors.Open(eq_handle); // EPHEMERAL: starts exhausted, JOIN resets
     REQUIRE(eq_cursor != nullptr);
 
     // Plan: JOIN( SCAN(people), SCAN(eq[ Var("age"), Const("25") ]) )
@@ -178,13 +189,14 @@ TEST_CASE("TAKE limits tuples emitted from a SCAN", "[take]")
     const std::vector<std::string> path = { "relations", "items" };
 
     f.objects.Register(path, std::make_unique<nt::ObjectManager::Relation>(), make_relation_type());
-    store_tuple(f.backend, path, { { "id", "1" } });
-    store_tuple(f.backend, path, { { "id", "2" } });
-    store_tuple(f.backend, path, { { "id", "3" } });
+    store_tuple(f.backend, f.objects, path, { { "id", "1" } });
+    store_tuple(f.backend, f.objects, path, { { "id", "2" } });
+    store_tuple(f.backend, f.objects, path, { { "id", "3" } });
 
     auto* handle = f.handler.Open(path, &f.conn);
     REQUIRE(handle != nullptr);
-    auto* cursor = f.cursors.Open(handle);
+    auto* rel = dynamic_cast<nt::ObjectManager::Relation*>(f.objects.Find(path)->object.get());
+    auto* cursor = f.cursors.Open(handle, rel->merkle_root);
     REQUIRE(cursor != nullptr);
 
     nt::PlanNode scan;

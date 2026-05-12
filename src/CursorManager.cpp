@@ -1,4 +1,5 @@
 #include "CursorManager.h"
+#include "Merkle.h"
 #include "ObjectManager.h"
 #include "TupleCodec.h"
 
@@ -8,9 +9,9 @@ namespace nt
         : backend_(backend)
     {}
 
-    void CursorManager::LoadPage(cursor* c, const std::vector<std::string>& path)
+    void CursorManager::LoadPage(cursor* c)
     {
-        auto hashes = backend_.TupleHashes(path, c->fetch_offset, PAGE_SIZE);
+        auto hashes = Merkle::Page(backend_, c->merkle_root, c->fetch_offset, PAGE_SIZE);
         c->page.clear();
         c->page_position = 0;
 
@@ -26,7 +27,8 @@ namespace nt
             c->exhausted = true;
     }
 
-    CursorManager::cursor* CursorManager::Open(HandlerManager::handle* handle)
+    CursorManager::cursor* CursorManager::Open(HandlerManager::handle* handle,
+                                                const std::string& merkle_root)
     {
         if (handle == nullptr || handle->object == nullptr)
             return nullptr;
@@ -47,14 +49,17 @@ namespace nt
             return nullptr;
 
         auto* c = new cursor();
-        c->handle = handle;
-        LoadPage(c, handle->object->head->path);
+        c->handle      = handle;
+        c->merkle_root = merkle_root;
 
-        if (c->page.empty())
+        if (merkle_root.empty())
         {
-            delete c;
-            return nullptr;
+            // Empty relation: valid but immediately exhausted.
+            c->exhausted = true;
+            return c;
         }
+
+        LoadPage(c);
         return c;
     }
 
@@ -80,7 +85,7 @@ namespace nt
             return &c->page[c->page_position++];
         }
 
-        LoadPage(c, c->handle->object->head->path);
+        LoadPage(c);
         if (c->page.empty()) return nullptr;
         return &c->page[c->page_position++];
     }
