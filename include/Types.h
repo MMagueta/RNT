@@ -24,7 +24,21 @@ enum OBJECT_TYPE {
      * a projected stored relation) or AlephZero (e.g. the eq builtin). The
      * object_type for this label must be an ephemeral_object_type.
      */
-    EPHEMERAL_RELATION
+    EPHEMERAL_RELATION,
+    /**
+     * A named mutable reference to a multigroup state, analogous to a git
+     * branch. A BRANCH object carries an opaque payload (serialized multigroup
+     * bytes) that the caller — in practice Sakura — deserializes on open.
+     *
+     * Branch objects are the entry point for database connections: a client
+     * opens a handle to /system/branches/<name>, reads the payload bytes to
+     * reconstruct the multigroup in memory, and holds the handle for the
+     * duration of the session.
+     *
+     * The `exclusive` flag on the object_type should be set to true so that
+     * LifecycleManager::Contention serializes concurrent writers.
+     */
+    BRANCH
 };
 
 /** @brief Operations that may be supported by an object type. */

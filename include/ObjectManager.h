@@ -41,6 +41,20 @@ namespace nt
         class Transaction : public IObject {};
 
         /**
+         * @brief A named mutable reference to a multigroup state.
+         *
+         * The payload field carries the serialized multigroup bytes in whatever
+         * format the caller registered them with. The C API returns these bytes
+         * verbatim when a handle to the branch is opened; Sakura is responsible
+         * for deserializing them into a Multigroup object.
+         */
+        class Branch : public IObject {
+        public:
+            std::string name;
+            std::vector<uint8_t> payload;
+        };
+
+        /**
          * @brief Describes the behavior and capabilities of an object category.
          *
          * @todo Replace `methods` with typed callback fields: `OpenProcedure`,

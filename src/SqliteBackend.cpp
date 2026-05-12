@@ -108,7 +108,7 @@ namespace nt
         sqlite3_stmt* stmt = nullptr;
         sqlite3_prepare_v2(db_,
             "SELECT tuple_hash FROM relation_index"
-            " WHERE path = ? ORDER BY rowid LIMIT ? OFFSET ?",
+            " WHERE path = ? ORDER BY tuple_hash LIMIT ? OFFSET ?",
             -1, &stmt, nullptr);
         sqlite3_bind_text(stmt, 1, path_key.c_str(), -1, SQLITE_TRANSIENT);
         sqlite3_bind_int64(stmt, 2, static_cast<sqlite3_int64>(limit));
