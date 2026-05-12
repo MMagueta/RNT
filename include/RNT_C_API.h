@@ -232,6 +232,83 @@ int rnt_cursor_next(rnt_cursor_t cursor, char** tuple_out);
 int rnt_cursor_close(rnt_cursor_t cursor);
 
 /* ------------------------------------------------------------------ */
+/* VM plan builder                                                      */
+/* ------------------------------------------------------------------ */
+
+/** Opaque plan node tree, built incrementally via rnt_plan_* calls. */
+typedef void* rnt_plan_t;
+
+/**
+ * @brief Creates a SCAN plan node that reads all tuples from a stored relation.
+ *
+ * Opens a RELATION handle and cursor internally. Both are transferred to the
+ * plan and released when the resulting VM cursor is closed.
+ *
+ * @param relation_path  Absolute slash-separated path to the relation, e.g.
+ *                       "/system/branches/main/relations/public:users".
+ * @return Plan node, or NULL when the relation does not exist or cannot be opened.
+ */
+rnt_plan_t rnt_plan_scan(const char* relation_path);
+
+/**
+ * @brief Creates a nested-loop JOIN plan node.
+ *
+ * Takes ownership of both @p left and @p right. On success the caller must not
+ * free either child; they are released when the returned plan is freed or
+ * executed. On failure (NULL return) both children are freed.
+ *
+ * @return Plan node, or NULL on error.
+ */
+rnt_plan_t rnt_plan_join(rnt_plan_t left, rnt_plan_t right);
+
+/**
+ * @brief Creates a TAKE plan node that limits output to at most @p limit tuples.
+ *
+ * Takes ownership of @p source. On failure @p source is freed.
+ *
+ * @return Plan node, or NULL on error.
+ */
+rnt_plan_t rnt_plan_take(rnt_plan_t source, size_t limit);
+
+/**
+ * @brief Releases a plan that was built but not yet executed.
+ *
+ * Closes any open cursors and handles owned by the plan tree, then frees all
+ * nodes. Safe to call with NULL. Do NOT call after rnt_vm_execute_plan —
+ * that function takes ownership.
+ */
+void rnt_plan_free(rnt_plan_t plan);
+
+/**
+ * @brief Executes a plan tree and returns a streaming VM cursor.
+ *
+ * Takes ownership of @p plan; the caller must not call rnt_plan_free after this.
+ * The returned cursor is advanced with rnt_vm_cursor_next() and must be closed
+ * with rnt_vm_cursor_close(), which also releases all plan resources.
+ *
+ * @return VM cursor, or NULL when the plan is NULL.
+ */
+rnt_cursor_t rnt_vm_execute_plan(rnt_plan_t plan);
+
+/**
+ * @brief Advances a VM cursor and returns the next merged tuple as a kv string.
+ *
+ * Same encoding and return-value semantics as rnt_cursor_next.
+ *
+ * @param vm_cursor  Cursor returned by rnt_vm_execute_plan.
+ * @param tuple_out  Set to a heap-allocated kv string, or NULL when exhausted.
+ *                   Release with rnt_free_string() when non-NULL.
+ * @return 1 when a tuple was returned, 0 when exhausted, negative on error.
+ */
+int rnt_vm_cursor_next(rnt_cursor_t vm_cursor, char** tuple_out);
+
+/**
+ * @brief Closes a VM cursor, releases all plan nodes, cursors, and handles.
+ * @return 0 on success, negative on error.
+ */
+int rnt_vm_cursor_close(rnt_cursor_t vm_cursor);
+
+/* ------------------------------------------------------------------ */
 /* Memory management                                                    */
 /* ------------------------------------------------------------------ */
 

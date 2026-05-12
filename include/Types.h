@@ -38,7 +38,15 @@ enum OBJECT_TYPE {
      * The `exclusive` flag on the object_type should be set to true so that
      * LifecycleManager::Contention serializes concurrent writers.
      */
-    BRANCH
+    BRANCH,
+    /**
+     * A named query plan stored in the object registry. A VIEW object carries
+     * the serialized plan definition and the multigroup hash at definition time.
+     * No handles to physical storage are kept open in the VIEW object itself.
+     * Each time the view is opened, fresh relation handles and cursors are
+     * created for the duration of that execution, then released on close.
+     */
+    VIEW
 };
 
 /** @brief Operations that may be supported by an object type. */

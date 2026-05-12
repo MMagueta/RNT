@@ -115,6 +115,61 @@ namespace
         t->exclusive = true;
         return t;
     }
+
+    // -----------------------------------------------------------------------
+    // Plan builder internals
+    // -----------------------------------------------------------------------
+
+    /**
+     * Wraps an entire plan subtree.  All PlanNode allocations and all
+     * CursorManager::cursor* / HandlerManager::handle* opened by SCAN nodes
+     * are collected here so they can be released atomically when the plan is
+     * freed or transferred to a VmCursor.
+     */
+    struct PlanWrapper
+    {
+        nt::PlanNode*                                root     = nullptr;
+        std::vector<std::unique_ptr<nt::PlanNode>>   nodes;    // owns every node in subtree
+        std::vector<nt::CursorManager::cursor*>      cursors;  // one per SCAN leaf
+        std::vector<nt::HandlerManager::handle*>     handles;  // one per SCAN leaf
+    };
+
+    static void free_plan_wrapper(PlanWrapper* pw)
+    {
+        if (!pw) return;
+        for (auto* c : pw->cursors)  g_rt->cursors->Close(c);
+        for (auto* h : pw->handles)  g_rt->handler->Close(h);
+        delete pw;
+    }
+
+    /**
+     * A VM cursor owns the materialised plan tree and all resources opened
+     * during plan construction.  After rnt_vm_execute_plan the caller drives
+     * it with rnt_vm_cursor_next / rnt_vm_cursor_close.
+     */
+    struct VmCursor
+    {
+        nt::VM                                       vm;
+        nt::PlanNode*                                root;
+        std::vector<std::unique_ptr<nt::PlanNode>>   nodes;
+        std::vector<nt::CursorManager::cursor*>      cursors;
+        std::vector<nt::HandlerManager::handle*>     handles;
+
+        explicit VmCursor(nt::CursorManager& cm, PlanWrapper* pw)
+            : vm(cm), root(pw->root)
+        {
+            nodes   = std::move(pw->nodes);
+            cursors = std::move(pw->cursors);
+            handles = std::move(pw->handles);
+            delete pw;  // struct itself; resources transferred above
+        }
+
+        ~VmCursor()
+        {
+            for (auto* c : cursors) g_rt->cursors->Close(c);
+            for (auto* h : handles) g_rt->handler->Close(h);
+        }
+    };
 }
 
 // ---------------------------------------------------------------------------
@@ -302,3 +357,122 @@ int rnt_cursor_close(rnt_cursor_t cursor)
 
 void rnt_free_string(char* s)  { delete[] s; }
 void rnt_free_bytes(uint8_t* p) { delete[] p; }
+
+// ---------------------------------------------------------------------------
+// VM plan builder
+// ---------------------------------------------------------------------------
+
+rnt_plan_t rnt_plan_scan(const char* relation_path)
+{
+    if (!is_init() || !relation_path) return nullptr;
+
+    // Open a handle to the stored relation through the full manager pipeline.
+    const auto parts = split_path(relation_path);
+    auto* h = g_rt->handler->Open(parts, nullptr);
+    if (!h) return nullptr;
+
+    auto* c = g_rt->cursors->Open(h);
+    if (!c)
+    {
+        g_rt->handler->Close(h);
+        return nullptr;
+    }
+
+    auto  node        = std::make_unique<nt::PlanNode>();
+    node->op          = nt::PlanNode::Op::SCAN;
+    node->scan_cursor = c;
+
+    auto* pw       = new PlanWrapper();
+    pw->root       = node.get();
+    pw->nodes.push_back(std::move(node));
+    pw->cursors.push_back(c);
+    pw->handles.push_back(h);
+    return pw;
+}
+
+rnt_plan_t rnt_plan_join(rnt_plan_t left, rnt_plan_t right)
+{
+    if (!left || !right)
+    {
+        free_plan_wrapper(static_cast<PlanWrapper*>(left));
+        free_plan_wrapper(static_cast<PlanWrapper*>(right));
+        return nullptr;
+    }
+
+    auto* l = static_cast<PlanWrapper*>(left);
+    auto* r = static_cast<PlanWrapper*>(right);
+
+    auto  node  = std::make_unique<nt::PlanNode>();
+    node->op    = nt::PlanNode::Op::JOIN;
+    node->left  = l->root;
+    node->right = r->root;
+
+    auto* pw  = new PlanWrapper();
+    pw->root  = node.get();
+    pw->nodes.push_back(std::move(node));
+
+    // Absorb child resources into the new wrapper.
+    for (auto& n : l->nodes)   pw->nodes.push_back(std::move(n));
+    for (auto& n : r->nodes)   pw->nodes.push_back(std::move(n));
+    for (auto* c : l->cursors) pw->cursors.push_back(c);
+    for (auto* c : r->cursors) pw->cursors.push_back(c);
+    for (auto* h : l->handles) pw->handles.push_back(h);
+    for (auto* h : r->handles) pw->handles.push_back(h);
+
+    delete l;
+    delete r;
+    return pw;
+}
+
+rnt_plan_t rnt_plan_take(rnt_plan_t source, size_t limit)
+{
+    if (!source) return nullptr;
+
+    auto* s = static_cast<PlanWrapper*>(source);
+
+    auto  node         = std::make_unique<nt::PlanNode>();
+    node->op           = nt::PlanNode::Op::TAKE;
+    node->left         = s->root;
+    node->take_limit   = limit;
+
+    auto* pw  = new PlanWrapper();
+    pw->root  = node.get();
+    pw->nodes.push_back(std::move(node));
+
+    for (auto& n : s->nodes)   pw->nodes.push_back(std::move(n));
+    for (auto* c : s->cursors) pw->cursors.push_back(c);
+    for (auto* h : s->handles) pw->handles.push_back(h);
+
+    delete s;
+    return pw;
+}
+
+void rnt_plan_free(rnt_plan_t plan)
+{
+    free_plan_wrapper(static_cast<PlanWrapper*>(plan));
+}
+
+rnt_cursor_t rnt_vm_execute_plan(rnt_plan_t plan)
+{
+    if (!is_init() || !plan) return nullptr;
+    // VmCursor constructor transfers ownership from PlanWrapper and deletes it.
+    return new VmCursor(*g_rt->cursors, static_cast<PlanWrapper*>(plan));
+}
+
+int rnt_vm_cursor_next(rnt_cursor_t vm_cursor, char** tuple_out)
+{
+    if (!is_init() || !vm_cursor || !tuple_out) return -1;
+    auto* vc = static_cast<VmCursor*>(vm_cursor);
+    nt::Tuple* t = vc->vm.Next(vc->root);
+    if (!t) { *tuple_out = nullptr; return 0; }
+    *tuple_out = heap_str(tuple_to_kv(t));
+    return 1;
+}
+
+int rnt_vm_cursor_close(rnt_cursor_t vm_cursor)
+{
+    if (!is_init() || !vm_cursor) return -1;
+    // VmCursor destructor closes all cursors and handles.
+    delete static_cast<VmCursor*>(vm_cursor);
+    return 0;
+}
