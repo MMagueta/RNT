@@ -24,7 +24,33 @@ enum OBJECT_TYPE {
      * a projected stored relation) or AlephZero (e.g. the eq builtin). The
      * object_type for this label must be an ephemeral_object_type.
      */
-    EPHEMERAL_RELATION
+    EPHEMERAL_RELATION,
+    /**
+     * A named mutable reference to a multigroup state, analogous to a git
+     * branch. A BRANCH object carries an opaque payload (serialized multigroup
+     * bytes) that the caller — in practice Sakura — deserializes on open.
+     *
+     * Branch objects are the entry point for database connections: a client
+     * opens a handle to /system/branches/<name>, reads the payload bytes to
+     * reconstruct the multigroup in memory, and holds the handle for the
+     * duration of the session.
+     *
+     * The `exclusive` flag on the object_type should be set to true so that
+     * LifecycleManager::Contention serializes concurrent writers.
+     */
+    BRANCH,
+    /**
+     * A named query plan stored in the object registry. A VIEW object carries
+     * the serialized plan definition and the multigroup hash at definition time.
+     * No handles to physical storage are kept open in the VIEW object itself.
+     * Each time the view is opened, fresh relation handles and cursors are
+     * created for the duration of that execution, then released on close.
+     *
+     * @todo Implement ObjectManager::View, rnt_register_view, and the
+     *       open-view path in HandlerManager. Views are reserved in the type
+     *       system but have no runtime support yet.
+     */
+    VIEW
 };
 
 /** @brief Operations that may be supported by an object type. */

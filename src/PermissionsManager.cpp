@@ -14,6 +14,6 @@ namespace nt
         // like user group, policy, etc.
         // Yet to decide if this should be summoned at every attempt to get ahold of an object,
         // that might produce significant overhead. How can we solve this?
-        return object != nullptr && connection_context != nullptr;
+        return object != nullptr;
     }
 }

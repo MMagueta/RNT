@@ -35,10 +35,33 @@ namespace nt
 
         /** @brief Abstract registry object representing a multigroup. */
         class Multigroup : public IObject {};
-        /** @brief Abstract registry object representing a relation. */
-        class Relation : public IObject {};
+        /**
+         * @brief Registry object representing a stored relation.
+         *
+         * merkle_root is the hex hash of the Merkle B-tree root node stored in
+         * the KV backend.  Empty string means the relation contains no tuples.
+         * Updated atomically by rnt_link_tuple / rnt_unlink_tuple / rnt_clear_relation.
+         */
+        class Relation : public IObject {
+        public:
+            std::string merkle_root;
+        };
         /** @brief Abstract registry object representing a transaction. */
         class Transaction : public IObject {};
+
+        /**
+         * @brief A named mutable reference to a multigroup state.
+         *
+         * The payload field carries the serialized multigroup bytes in whatever
+         * format the caller registered them with. The C API returns these bytes
+         * verbatim when a handle to the branch is opened; Sakura is responsible
+         * for deserializing them into a Multigroup object.
+         */
+        class Branch : public IObject {
+        public:
+            std::string name;
+            std::vector<uint8_t> payload;
+        };
 
         /**
          * @brief Describes the behavior and capabilities of an object category.

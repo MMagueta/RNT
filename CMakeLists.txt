@@ -24,6 +24,7 @@ add_executable (RelationalNT
     "src/LifecycleManager.cpp"
     "src/HandlerManager.cpp"
     "src/CursorManager.cpp"
+    "src/Merkle.cpp"
     "src/TupleCodec.cpp"
     "src/InMemoryBackend.cpp"
     "src/SqliteBackend.cpp"
@@ -50,6 +51,7 @@ set(RNT_CORE_SOURCES
     "src/LifecycleManager.cpp"
     "src/HandlerManager.cpp"
     "src/CursorManager.cpp"
+    "src/Merkle.cpp"
     "src/TupleCodec.cpp"
     "src/InMemoryBackend.cpp"
     "src/NamespaceReferenceManager.cpp"
@@ -68,3 +70,14 @@ set_property(TARGET RNT_tests PROPERTY CXX_STANDARD 20)
 
 include(Catch)
 catch_discover_tests(RNT_tests DISCOVERY_MODE PRE_TEST)
+
+add_library(RNT SHARED
+    "src/RNT_C_API.cpp"
+    "src/SqliteBackend.cpp"
+    ${RNT_CORE_SOURCES}
+)
+target_include_directories(RNT PUBLIC "include")
+target_include_directories(RNT PRIVATE ${PICOSHA2_INCLUDE_DIRS})
+target_compile_definitions(RNT PRIVATE NT_EXPORTS)
+target_link_libraries(RNT PRIVATE unofficial::sqlite3::sqlite3)
+set_property(TARGET RNT PROPERTY CXX_STANDARD 20)

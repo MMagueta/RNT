@@ -33,3 +33,6 @@ jobs:
 
       - name: Build
         run: cmake --build out/build/${{ matrix.preset }}
+
+      - name: Test
+        run: ctest --test-dir out/build/${{ matrix.preset }} --output-on-failure
