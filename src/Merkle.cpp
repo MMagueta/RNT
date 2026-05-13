@@ -53,14 +53,19 @@ static uint64_t read_u64(const uint8_t* p)
 
 Merkle::Hash32 Merkle::hex_to_bin(const std::string& hex)
 {
+    if (hex.size() != 64)
+        throw std::invalid_argument(
+            "Merkle: hash must be exactly 64 hex characters, got " +
+            std::to_string(hex.size()));
+
     Hash32 out{};
     auto nibble = [](char c) -> uint8_t {
         if (c >= '0' && c <= '9') return static_cast<uint8_t>(c - '0');
         if (c >= 'a' && c <= 'f') return static_cast<uint8_t>(c - 'a' + 10);
         if (c >= 'A' && c <= 'F') return static_cast<uint8_t>(c - 'A' + 10);
-        return 0;
+        throw std::invalid_argument(std::string("Merkle: invalid hex character '") + c + "'");
     };
-    for (size_t i = 0; i < 32 && (2*i+1) < hex.size(); ++i)
+    for (size_t i = 0; i < 32; ++i)
         out[i] = static_cast<uint8_t>((nibble(hex[2*i]) << 4) | nibble(hex[2*i+1]));
     return out;
 }
@@ -168,14 +173,26 @@ Merkle::Hash32 Merkle::subtree_min(IStorageBackend& store, const std::string& no
 {
     auto bytes = load_node(store, node_hex);
     if (is_leaf_bytes(bytes))
-        return decode_leaf(bytes).hashes.front();
-    return decode_internal(bytes).entries.front().min_hash;
+    {
+        auto leaf = decode_leaf(bytes);
+        assert(!leaf.hashes.empty() && "Merkle invariant: leaf node must never be empty");
+        return leaf.hashes.front();
+    }
+    auto node = decode_internal(bytes);
+    assert(!node.entries.empty() && "Merkle invariant: internal node must never be empty");
+    return node.entries.front().min_hash;
 }
 
 // ── Routing helper ───────────────────────────────────────────────────────────
 
 size_t Merkle::route(const InternalNode& node, const Hash32& target)
 {
+    assert(!node.entries.empty() && "Merkle invariant: internal node must never be empty");
+    assert(std::is_sorted(node.entries.begin(), node.entries.end(),
+               [](const ChildEntry& a, const ChildEntry& b) {
+                   return a.min_hash < b.min_hash;
+               }) && "Merkle invariant: internal node entries must be sorted by min_hash");
+
     // Rightmost child whose min_hash ≤ target.
     // Defaults to 0 (leftmost) when target < all min_hashes.
     size_t idx = 0;

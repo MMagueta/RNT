@@ -8,7 +8,7 @@
  * them to the appropriate C++ types internally. Callers must never dereference
  * handle or cursor pointers directly.
  *
- * Memory contract:
+ * ## Memory contract
  *   - Strings returned via out-parameters (char**) are heap-allocated by the
  *     API and must be released with rnt_free_string().
  *   - Payloads returned via (uint8_t**, size_t*) are heap-allocated and must
@@ -16,9 +16,20 @@
  *   - Handles and cursors are owned by the caller and must be closed before
  *     the program exits.
  *
- * Error convention:
+ * ## Error convention
  *   - Functions returning int use 0 for success and a negative value for error.
  *   - Functions returning a pointer return NULL on failure.
+ *
+ * ## Thread safety
+ *   This API is **not thread-safe**. The global runtime (g_rt) is a single
+ *   in-process instance; all callers share the same ObjectManager and storage
+ *   backend. The expected usage model is a single OCaml thread (or domain)
+ *   driving the API at a time. If concurrent access is needed in the future,
+ *   a per-object or per-relation mutex strategy should be introduced.
+ *
+ * @todo Implement AUTH_CLAIM::READ/WRITE enforcement in rnt_open_handle once
+ *       PermissionsManager::Access is wired to a real policy engine. Currently
+ *       all handles open with full access regardless of the claims parameter.
  */
 
 #include <stddef.h>
@@ -41,8 +52,10 @@ typedef void* rnt_cursor_t;
 /**
  * @brief Initialises the RNT runtime with the selected storage backend.
  *
- * Must be called once before any other API function. Subsequent calls are
- * no-ops.
+ * Must be called before any other API function. Once the runtime is
+ * successfully initialised, subsequent calls are no-ops and return 0.
+ * If initialisation fails (returns negative), the call may be retried
+ * with corrected parameters — the runtime is left in a clean state.
  *
  * @param driver        Storage driver to use: "sqlite" or "memory".
  *                      "sqlite" persists data to @p storage_path.
@@ -112,9 +125,14 @@ int rnt_branch_payload(rnt_handle_t handle,
 /**
  * @brief Writes new payload bytes into the BRANCH object referenced by handle.
  *
- * The branch handle must have been opened with WRITE access. This updates the
- * in-memory branch object; callers are responsible for persisting the multigroup
- * state to the storage backend separately via tuple link operations.
+ * Updates the in-memory branch object. Callers are responsible for persisting
+ * the multigroup state to the storage backend separately via tuple link
+ * operations.
+ *
+ * Write exclusion is structural: BRANCH objects carry @c exclusive=true in
+ * their object_type, so LifecycleManager::Contention prevents a second handle
+ * from being opened while a writer holds the branch. AUTH_CLAIM::WRITE is not
+ * checked at the C API boundary.
  *
  * @param handle   Open BRANCH handle.
  * @param payload  New serialized multigroup bytes.

@@ -30,7 +30,9 @@ The NT kernel is a good model for a dedicated database kernel for three reasons.
 
 * Current Status
 
-The open-handle pipeline is wired end-to-end and cursors pull tuples lazily from the storage backend one page at a time through the Tarski FOL engine. The active backend (=SqliteBackend=) keeps a =kv(hash, value)= table for content-addressed tuple data and a =relation_index(path, hash)= table for relation membership. =InMemoryBackend= provides the same interface for tests.
+The open-handle pipeline is wired end-to-end and cursors pull tuples lazily from the storage backend one page at a time through the Tarski FOL engine. The active backend (=SqliteBackend=) keeps a single =kv(hash, value)= table for content-addressed tuple data. Relation membership is tracked by a sorted Merkle B-tree (=Merkle=) whose nodes are stored in the same KV table; only the root hash per relation is held in memory. =InMemoryBackend= provides the same interface for tests.
+
+An =extern "C"= API (=RNT_C_API.h=) exposes the full manager pipeline to OCaml via ctypes, enabling Sakura to use this kernel as its storage and query execution layer.
 
 Several manager features are still being designed: dual ref counting, type callbacks, trie-based object lookup, and the namespace reparse layer. These are specified in header comments.
 
@@ -42,9 +44,9 @@ The easiest Unix path is the Nix development shell. It provides CMake, Ninja,
 SQLite, PicoSHA2 headers, Catch2, and debugger tooling.
 
 #+begin_src shell
-cd /Users/mmagueta/Developer/RNT
 nix develop
 cmake -S . -B _build -G Ninja -DCMAKE_BUILD_TYPE=Debug
+cmake --build _build
 ctest --test-dir _build --output-on-failure
 #+end_src
 

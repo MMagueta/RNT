@@ -42,8 +42,9 @@ int main()
     type->methods = { OPEN, CLOSE };
 
     const std::vector<std::string> path = { "multigroups", "sakura", "relations", "villager" };
-    auto* villager_rel = new nt::ObjectManager::Relation();
-    objects.Register(path, std::unique_ptr<nt::ObjectManager::Relation>(villager_rel), std::move(type));
+    objects.Register(path, std::make_unique<nt::ObjectManager::Relation>(), std::move(type));
+    auto* villager_rel = dynamic_cast<nt::ObjectManager::Relation*>(
+        objects.Find(path)->object.get());
 
     // --- Populate backend with three tuples via the Merkle tree ---
     nt::SqliteBackend backend;

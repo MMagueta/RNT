@@ -12,19 +12,22 @@
 #include "TupleCodec.h"
 #include "VM.h"
 
-#include <picosha2.h>
-
 #include <cstring>
 #include <memory>
 #include <mutex>
-#include <numeric>
 #include <sstream>
 #include <stdexcept>
 #include <string>
 #include <vector>
 
 // ---------------------------------------------------------------------------
-// Global runtime state (single instance per process)
+// Global runtime state
+//
+// A single Runtime instance is created per process on the first successful
+// rnt_init call.  All managers share this instance; they do not hold their
+// own state.  Initialisation is protected by g_init_mutex so that concurrent
+// first-callers are safe; once g_init_done is true the mutex is never
+// contended again.
 // ---------------------------------------------------------------------------
 
 namespace
@@ -41,9 +44,10 @@ namespace
     };
 
     static std::unique_ptr<Runtime> g_rt;
-    static std::once_flag           g_init_flag;
+    static std::mutex               g_init_mutex;
+    static bool                     g_init_done = false;
 
-    bool is_init() { return g_rt != nullptr; }
+    bool is_init() { return g_init_done; }
 
     static std::vector<std::string> split_path(const char* path)
     {
@@ -175,46 +179,52 @@ namespace
 
 // ---------------------------------------------------------------------------
 // Public C API
+//
+// Section order mirrors the NT open-handle pipeline:
+//   Runtime lifecycle → Authentication → Handle lifecycle →
+//   Object registration → Tuple storage → Cursor / VM plan builder
 // ---------------------------------------------------------------------------
 
 int rnt_init(const char* driver, const char* storage_path)
 {
-    int result = 0;
-    std::call_once(g_init_flag, [&]()
+    std::lock_guard<std::mutex> lock(g_init_mutex);
+    if (g_init_done) return 0;
+
+    try
     {
-        try
+        auto rt = std::make_unique<Runtime>();
+
+        const std::string drv = driver ? driver : "sqlite";
+        if (drv == "memory")
+            rt->storage = std::make_unique<nt::InMemoryBackend>();
+        else
+            rt->storage = std::make_unique<nt::SqliteBackend>(
+                storage_path ? storage_path : ":memory:");
+
+        rt->handler = std::make_unique<nt::HandlerManager>(
+            rt->objects, rt->permissions, rt->identities, rt->lifecycles);
+        rt->cursors = std::make_unique<nt::CursorManager>(*rt->storage);
+        g_rt = std::move(rt);
+
+        // Register the default branch on first boot so that
+        // rnt_open_handle("/system/branches/master") always succeeds.
+        const auto main_path = split_path("/system/branches/master");
+        if (g_rt->objects.Find(main_path) == nullptr)
         {
-            auto rt = std::make_unique<Runtime>();
-
-            const std::string drv = driver ? driver : "sqlite";
-            if (drv == "memory")
-                rt->storage = std::make_unique<nt::InMemoryBackend>();
-            else
-                rt->storage = std::make_unique<nt::SqliteBackend>(
-                    storage_path ? storage_path : ":memory:");
-
-            rt->handler = std::make_unique<nt::HandlerManager>(
-                rt->objects, rt->permissions, rt->identities, rt->lifecycles);
-            rt->cursors = std::make_unique<nt::CursorManager>(*rt->storage);
-            g_rt = std::move(rt);
-
-            // Register the default branch on first boot so that
-            // rnt_open_handle("/system/branches/master") always succeeds.
-            const auto main_path = split_path("/system/branches/master");
-            if (g_rt->objects.Find(main_path) == nullptr)
-            {
-                auto branch  = std::make_unique<nt::ObjectManager::Branch>();
-                branch->name = "master";
-                g_rt->objects.Register(main_path, std::move(branch),
-                                       make_branch_type());
-            }
+            auto branch  = std::make_unique<nt::ObjectManager::Branch>();
+            branch->name = "master";
+            g_rt->objects.Register(main_path, std::move(branch),
+                                   make_branch_type());
         }
-        catch (...)
-        {
-            result = -1;
-        }
-    });
-    return result;
+
+        g_init_done = true;
+        return 0;
+    }
+    catch (...)
+    {
+        g_rt.reset();
+        return -1;
+    }
 }
 
 int rnt_firewall(const char* /*auth_method*/, char** claims_out)
@@ -380,13 +390,7 @@ int rnt_cursor_next(rnt_cursor_t cursor, char** tuple_out)
 {
     if (!is_init() || !cursor || !tuple_out) return -1;
     auto* c = static_cast<nt::CursorManager::cursor*>(cursor);
-
-    nt::PlanNode plan;
-    plan.op          = nt::PlanNode::Op::SCAN;
-    plan.scan_cursor = c;
-
-    nt::VM vm(*g_rt->cursors);
-    nt::Tuple* t = vm.Next(&plan);
+    nt::Tuple* t = g_rt->cursors->Next(c);
     if (!t) { *tuple_out = nullptr; return 0; }
     *tuple_out = heap_str(tuple_to_kv(t));
     return 1;

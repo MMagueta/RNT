@@ -19,12 +19,15 @@
       ];
 
       forAllSystems = nixpkgs.lib.genAttrs systems;
-    in
-    {
-      packages = forAllSystems (system:
+
+      # Shared per-system derivations used by both the package and the dev shell.
+      mkDeps = system:
         let
           pkgs = import nixpkgs { inherit system; };
 
+          # Maps the vcpkg-style unofficial::sqlite3::sqlite3 CMake
+          # target to the system SQLite3 package. Required because CMakeLists.txt
+          # calls target_link_libraries(... unofficial::sqlite3::sqlite3).
           unofficialSqlite3Config = pkgs.writeTextDir
             "share/unofficial-sqlite3/unofficial-sqlite3-config.cmake"
             ''
@@ -37,9 +40,18 @@
               endif()
             '';
 
+          # PicoSHA2 is a single-header library; extract just the header.
           picosha2Headers = pkgs.runCommand "picosha2-headers" { } ''
             install -Dm644 ${picosha2}/picosha2.h $out/include/picosha2.h
           '';
+
+        in { inherit pkgs unofficialSqlite3Config picosha2Headers; };
+
+    in
+    {
+      packages = forAllSystems (system:
+        let
+          inherit (mkDeps system) pkgs unofficialSqlite3Config picosha2Headers;
         in
         {
           default = pkgs.stdenv.mkDerivation {
@@ -93,24 +105,10 @@
 
       devShells = forAllSystems (system:
         let
-          pkgs = import nixpkgs { inherit system; };
+          inherit (mkDeps system) pkgs unofficialSqlite3Config picosha2Headers;
 
-          unofficialSqlite3Config = pkgs.writeTextDir
-            "share/unofficial-sqlite3/unofficial-sqlite3-config.cmake"
-            ''
-              include(CMakeFindDependencyMacro)
-              find_dependency(SQLite3 REQUIRED)
-
-              if(NOT TARGET unofficial::sqlite3::sqlite3)
-                add_library(unofficial::sqlite3::sqlite3 INTERFACE IMPORTED)
-                target_link_libraries(unofficial::sqlite3::sqlite3 INTERFACE SQLite::SQLite3)
-              endif()
-            '';
-
-          picosha2Headers = pkgs.runCommand "picosha2-headers" { } ''
-            install -Dm644 ${picosha2}/picosha2.h $out/include/picosha2.h
-          '';
-
+          # Wrapper that invokes clangd with the Nix toolchain's compiler paths,
+          # enabling accurate diagnostics in editors that use compile_commands.json.
           clangdRnt = pkgs.writeShellScriptBin "clangd-rnt" ''
             exec ${pkgs.clang-tools}/bin/clangd \
               --query-driver='${pkgs.stdenv.cc}/bin/*,/usr/bin/clang,/usr/bin/clang++' \

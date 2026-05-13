@@ -45,6 +45,10 @@ enum OBJECT_TYPE {
      * No handles to physical storage are kept open in the VIEW object itself.
      * Each time the view is opened, fresh relation handles and cursors are
      * created for the duration of that execution, then released on close.
+     *
+     * @todo Implement ObjectManager::View, rnt_register_view, and the
+     *       open-view path in HandlerManager. Views are reserved in the type
+     *       system but have no runtime support yet.
      */
     VIEW
 };

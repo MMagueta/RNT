@@ -16,19 +16,29 @@
  * All three operations load only the nodes on the path from root to the target
  * leaf — O(log_B(n)) nodes in memory at once, never the whole tree.
  *
- * Branching factor B = 64: leaves hold up to 64 hashes; internal nodes hold
+ * **Branching factor B = 64**: leaves hold up to 64 hashes; internal nodes hold
  * up to 64 child entries.  At B=64 and 1 billion tuples the tree is at most
  * 5 levels deep (~20 KB peak working set).
  *
- * Nodes are immutable once written (content-addressed). Insert and Remove
- * write new nodes only along the modified path; old nodes remain valid for any
- * snapshot that still references them.
+ * **Immutability**: nodes are never overwritten once written (content-addressed).
+ * Insert and Remove produce new nodes only along the modified path; old nodes
+ * remain valid for any snapshot that still holds their root hash.
  *
- * Internal node entries store (leaf_count, min_hash, child_hash):
- *   - leaf_count enables O(log_B(n)+limit) offset navigation without loading
- *     sibling subtrees.
- *   - min_hash (smallest hash in the subtree) is the routing key.
- *   - child_hash is the content-addressed hash of the child node blob.
+ * **Internal node entry layout** (leaf_count | min_hash | child_hash):
+ *   - `leaf_count` enables O(log_B(n) + limit) offset navigation for Page()
+ *     without loading sibling subtrees.
+ *   - `min_hash` (smallest tuple hash in the subtree) is the routing key.
+ *   - `child_hash` is the content-addressed hash of the child node blob.
+ *
+ * **Invariants** (asserted in debug builds):
+ *   - No leaf or internal node is ever empty.
+ *   - Internal node entries are sorted ascending by min_hash.
+ *   - All public entry points that accept a hex hash throw `std::invalid_argument`
+ *     when the string is not exactly 64 lowercase hex characters.
+ *
+ * @todo Add bounds checking in decode_leaf / decode_internal: validate that the
+ *       reported entry count does not exceed the actual blob size before reading.
+ *       Currently a truncated or corrupt blob causes out-of-bounds reads.
  */
 
 namespace nt {
