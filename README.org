@@ -36,6 +36,20 @@ Several manager features are still being designed: dual ref counting, type callb
 
 * Building
 
+** Unix / macOS with Nix
+
+The easiest Unix path is the Nix development shell. It provides CMake, Ninja,
+SQLite, PicoSHA2 headers, Catch2, and debugger tooling.
+
+#+begin_src shell
+cd /Users/mmagueta/Developer/RNT
+nix develop
+cmake -S . -B _build -G Ninja -DCMAKE_BUILD_TYPE=Debug
+ctest --test-dir _build --output-on-failure
+#+end_src
+
+** Windows with Visual Studio / MSVC
+
 Requires MSVC, CMake 3.10 or later, and vcpkg. Dependencies (=sqlite3= and =picosha2=) are fetched and built automatically during CMake configure via the vcpkg manifest.
 
 #+begin_src shell

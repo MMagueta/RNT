@@ -110,17 +110,75 @@
           picosha2Headers = pkgs.runCommand "picosha2-headers" { } ''
             install -Dm644 ${picosha2}/picosha2.h $out/include/picosha2.h
           '';
+
+          clangdRnt = pkgs.writeShellScriptBin "clangd-rnt" ''
+            exec ${pkgs.clang-tools}/bin/clangd \
+              --query-driver='${pkgs.stdenv.cc}/bin/*,/usr/bin/clang,/usr/bin/clang++' \
+              "$@"
+          '';
         in
         {
           default = pkgs.mkShell {
             packages = [
               pkgs.catch2_3
+              pkgs.clang-tools
               pkgs.cmake
+              pkgs.lldb
               pkgs.ninja
+              clangdRnt
               picosha2Headers
               pkgs.sqlite
               unofficialSqlite3Config
             ];
+
+            CC = "${pkgs.stdenv.cc}/bin/cc";
+            CXX = "${pkgs.stdenv.cc}/bin/c++";
+
+            CMAKE_PREFIX_PATH = pkgs.lib.makeSearchPathOutput "dev" "" [
+              picosha2Headers
+              pkgs.sqlite
+              unofficialSqlite3Config
+            ];
+
+            CMAKE_INCLUDE_PATH = pkgs.lib.makeSearchPathOutput "dev" "include" [
+              picosha2Headers
+              pkgs.sqlite
+            ];
+
+            CMAKE_LIBRARY_PATH = pkgs.lib.makeLibraryPath [
+              pkgs.sqlite
+            ];
+
+            CPATH = pkgs.lib.makeSearchPathOutput "dev" "include" [
+              picosha2Headers
+              pkgs.sqlite
+            ];
+
+            C_INCLUDE_PATH = pkgs.lib.makeSearchPathOutput "dev" "include" [
+              pkgs.sqlite
+            ];
+
+            CPLUS_INCLUDE_PATH = pkgs.lib.makeSearchPathOutput "dev" "include" [
+              picosha2Headers
+              pkgs.sqlite
+            ];
+
+            LIBRARY_PATH = pkgs.lib.makeLibraryPath [
+              pkgs.sqlite
+            ];
+
+            DYLD_LIBRARY_PATH = pkgs.lib.makeLibraryPath [
+              pkgs.sqlite
+            ];
+
+            PKG_CONFIG_PATH = pkgs.lib.makeSearchPathOutput "dev" "lib/pkgconfig" [
+              pkgs.sqlite
+            ];
+
+            shellHook = ''
+              export NIX_CFLAGS_COMPILE="-I${picosha2Headers}/include -I${pkgs.sqlite.dev}/include $NIX_CFLAGS_COMPILE"
+              export NIX_LDFLAGS="-L${pkgs.sqlite.out}/lib $NIX_LDFLAGS"
+            '';
           };
         });
 
