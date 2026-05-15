@@ -20,9 +20,28 @@ enum OBJECT_TYPE {
     TRANSACTION,
     /**
      * A relation whose tuples are produced on demand by a generator function
-     * rather than read from physical storage. Cardinality may be finite (e.g.
-     * a projected stored relation) or AlephZero (e.g. the eq builtin). The
-     * object_type for this label must be an ephemeral_object_type.
+     * rather than read from physical storage. Behaves like a RELATION in every
+     * other respect: owns a `merkle_root`, has mutable schema, composes into its
+     * multigroup's hash, and may be opened, scanned, and pinned through the
+     * same handle pipeline.
+     *
+     * The generator receives unsigned-int paginators (offset, limit) plus any
+     * bound argument values written by an upstream JOIN, and yields tuples.
+     * Cardinality may be finite (e.g. a projection over a stored relation) or
+     * AlephZero (e.g. the eq builtin). The object_type for this label must be
+     * an ephemeral_object_type.
+     *
+     * Tracked as a distinct label — rather than collapsed into RELATION —
+     * for three reasons:
+     *   1. Sakura distinguishes generated relations as a separate subclass at
+     *      the wire layer, even though the runtime treats them uniformly.
+     *   2. They have no physical tuple-storage backend; reads always go
+     *      through the generator.
+     *   3. They carry a dependency list of base relation paths they are
+     *      defined atop of. This drives structural reference counting (a
+     *      base relation cannot be GC'd while an ephemeral relation depends
+     *      on it) and is the foundation for attribute-level provenance
+     *      tracking added later.
      */
     EPHEMERAL_RELATION,
     /**
@@ -38,19 +57,7 @@ enum OBJECT_TYPE {
      * The `exclusive` flag on the object_type should be set to true so that
      * LifecycleManager::Contention serializes concurrent writers.
      */
-    BRANCH,
-    /**
-     * A named query plan stored in the object registry. A VIEW object carries
-     * the serialized plan definition and the multigroup hash at definition time.
-     * No handles to physical storage are kept open in the VIEW object itself.
-     * Each time the view is opened, fresh relation handles and cursors are
-     * created for the duration of that execution, then released on close.
-     *
-     * @todo Implement ObjectManager::View, rnt_register_view, and the
-     *       open-view path in HandlerManager. Views are reserved in the type
-     *       system but have no runtime support yet.
-     */
-    VIEW
+    BRANCH
 };
 
 /** @brief Operations that may be supported by an object type. */

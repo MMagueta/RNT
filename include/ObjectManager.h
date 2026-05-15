@@ -145,8 +145,9 @@ namespace nt
          *
          * - `handle_count` — open sessions holding a cursor or handle on this object.
          *   Managed exclusively by LifecycleManager::Monitor / Unmonitor.
-         * - `reference_count` — structural dependencies such as a view referencing its
-         *   base relations, or a cursor pinned to an immutable snapshot version.
+         * - `reference_count` — structural dependencies such as an ephemeral relation
+         *   referencing its base relations, or a cursor pinned to an immutable snapshot
+         *   version.
          *   Managed by LifecycleManager::Pin / Unpin (not yet implemented).
          *
          * All snapshot versions are immutable. An insertion or deletion produces a new
@@ -166,8 +167,8 @@ namespace nt
         struct registry_head {
             /**
              * Structural dependency count. Non-zero while another registry object
-             * references this one (e.g. a view depending on a base relation, or a
-             * cursor pinned to a snapshot version).
+             * references this one (e.g. an ephemeral relation depending on a base
+             * relation, or a cursor pinned to a snapshot version).
              * @todo Implement via LifecycleManager::Pin / Unpin.
              */
             uint32_t reference_count = 0;

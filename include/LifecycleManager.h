@@ -15,9 +15,9 @@ namespace nt
      *
      * Object lifetime is governed by two independent counters in registry_head:
      * `handle_count` (sessions holding an open handle) and `reference_count`
-     * (structural dependencies such as cursors pinned to a snapshot or views
-     * referencing base relations). An object is eligible for GC only when both
-     * reach zero.
+     * (structural dependencies such as cursors pinned to a snapshot or
+     * ephemeral relations referencing their base relations). An object is
+     * eligible for GC only when both reach zero.
      *
      * Monitor / Unmonitor manage `handle_count`. Pin / Unpin manage
      * `reference_count`. See docs/reactos-ob-comparison.md §1.
@@ -53,9 +53,9 @@ namespace nt
          * @brief Increments the structural dependency count on an object.
          *
          * Call when one object takes a dependency on another — for example when
-         * a cursor pins an immutable snapshot version, or when a view is
-         * registered against its base relations. Prevents GC of the target object
-         * while the dependency is live.
+         * a cursor pins an immutable snapshot version, or when an ephemeral
+         * relation is registered against its base relations. Prevents GC of the
+         * target object while the dependency is live.
          *
          * @todo Implement. See docs/reactos-ob-comparison.md §1.
          *

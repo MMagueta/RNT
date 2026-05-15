@@ -58,10 +58,10 @@ namespace nt
          * hold of an object, since that might produce significant overhead.
          *
          * Note that the permissions systems also rely on objects with capabilities,
-         * so imagining the case a view (ephemeral relation) is created based on 
-         * 3 other stored relations, while you can access the view, you cannot directly
-         * access the other 3 relations. You need explicit permission to create a handle
-         * on the others.
+         * so imagining the case an ephemeral relation is created based on
+         * 3 other stored relations, while you can access the ephemeral relation,
+         * you cannot directly access the other 3 relations. You need explicit
+         * permission to create a handle on the others.
          * 
          * Here's an example tree:
          * /system
@@ -79,7 +79,8 @@ namespace nt
          *             /permissions
          *                 /multigroups/coffee_shop/relations/user {descriptor : [write, read]}
          * 
-         * Meaning that `peter` has access to read the `user_and_order` ephemeral relation, but cannot open a handle on `user` and `order`.
+         * Meaning that `peter` has access to read the `user_and_order` ephemeral
+         * relation, but cannot open a handle on `user` and `order`.
          * 
          * @param object Object being accessed.
          * @param connection_context Connection metadata for the caller.
