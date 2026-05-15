@@ -51,12 +51,21 @@ namespace nt
     void LifecycleManager::TryCollect(ObjectManager::registry* object)
     {
         if (!IsEligibleForGC(object)) return;
+        if (object->head == nullptr || object->head->type == nullptr) return;
 
-        // Type-specific cascade before the entry leaves the registry.
-        if (object->head->type && object->head->type->label == MULTIGROUP)
-            CascadeMultigroup(object);
+        // Named-lifetime types are managed explicitly and must not auto-collect:
+        //   BRANCH  — named branches persist until a future explicit-delete API
+        //             tears them down. Their counters going to zero just means
+        //             nobody currently holds them open.
+        //   SESSION — rnt_session_close is the sole removal path.
+        // Everything else (MULTIGROUP, RELATION, EPHEMERAL_RELATION,
+        // TRANSACTION) is purely structurally referenced and is GC-eligible
+        // by counters alone.
+        const auto label = object->head->type->label;
+        if (label == BRANCH || label == SESSION) return;
 
-        // Splice the entry out — destroys the IObject and registry_head.
+        if (label == MULTIGROUP) CascadeMultigroup(object);
+
         objects_.Unregister(object->head->path);
     }
 

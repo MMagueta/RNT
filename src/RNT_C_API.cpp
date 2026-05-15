@@ -685,7 +685,15 @@ int rnt_relation_root(const char* relation_path, char** root_hash_out)
     auto* branch = find_branch(branch_path);
     if (!branch) return -1;
 
-    *root_hash_out = heap_str(read_relation_root(*branch, relation_name));
+    // Distinguish "relation registered but empty" (returns 0 with empty hash)
+    // from "relation not in this branch's snapshot" (returns -1). Without this
+    // check an unborn branch would silently report every relation as empty.
+    const auto relations = read_branch_relations(*branch);
+    auto it = std::find_if(relations.begin(), relations.end(),
+                           [&](const auto& e) { return e.first == relation_name; });
+    if (it == relations.end()) return -1;
+
+    *root_hash_out = heap_str(it->second);
     return 0;
 }
 
