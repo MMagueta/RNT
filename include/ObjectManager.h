@@ -5,6 +5,7 @@
 
 #include <cstdint>
 #include <functional>
+#include <map>
 #include <memory>
 #include <set>
 #include <string>
@@ -99,6 +100,33 @@ namespace nt
         };
         /** @brief Abstract registry object representing a transaction. */
         class Transaction : public IObject {};
+
+        /**
+         * @brief Registry object representing an active connection's session.
+         *
+         * `connection_context` carries whatever auth/connection metadata the
+         * caller passed to rnt_session_open. The runtime treats it as an
+         * opaque pointer; ownership of the pointee is the caller's concern.
+         *
+         * `branch_overrides` maps a branch name to the snapshot hash this
+         * session should see for that branch, instead of the global HEAD.
+         * NamespaceReferenceManager::Resolve consults the override first when
+         * a path of the form /system/sessions/<X>/branches/<name>/<sub>...
+         * is requested, falling back to the global /system/branches/<name>
+         * lookup when no override is present.
+         *
+         * The session→branch reference direction is intentional: global
+         * branches do not track viewing sessions, which keeps the hot path
+         * cheap. GC of a stale snapshot must walk all sessions' override
+         * maps to discover live references — amortised cost only paid at GC
+         * time. A reverse index can be added later if session counts make
+         * the walk hot.
+         */
+        class Session : public IObject {
+        public:
+            void* connection_context = nullptr;
+            std::map<std::string, std::string> branch_overrides;
+        };
 
         /**
          * @brief A named mutable reference to a multigroup snapshot.
@@ -274,5 +302,19 @@ namespace nt
          * @return Borrowed pointer to the matching entry, or nullptr when not found.
          */
         registry* Find(const std::vector<std::string> object_path);
+
+        /**
+         * @brief Removes the entry registered at @p object_path, if any.
+         *
+         * Splices the matching node out of the registry list and frees its
+         * owned object and head. No reference-count checks are performed —
+         * the caller is responsible for releasing handles and pins before
+         * calling this. Intended for disposable objects (sessions today,
+         * other disposables once GC lands in step 6).
+         *
+         * @param object_path Logical path of the entry to remove.
+         * @return True when an entry was removed, false when nothing matched.
+         */
+        bool Unregister(const std::vector<std::string>& object_path);
     };
 }

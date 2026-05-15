@@ -83,6 +83,59 @@ int rnt_init(const char* driver, const char* storage_path);
 int rnt_firewall(const char* auth_method, char** claims_out);
 
 /* ------------------------------------------------------------------ */
+/* Session lifecycle                                                    */
+/* ------------------------------------------------------------------ */
+
+/**
+ * @brief Opens a session and registers it at /system/sessions/<hash>.
+ *
+ * The runtime mints a random 256-bit hex hash for the session; the caller
+ * has no influence over the value. The returned string is the opaque
+ * identifier required by every other rnt_session_* call.
+ *
+ * @param connection_context  Caller-owned pointer carried on the session.
+ *                            The runtime treats it as opaque; ownership of
+ *                            the pointee remains with the caller.
+ * @param session_hash_out    Set to a heap-allocated 64-char hex string.
+ *                            Release with rnt_free_string().
+ * @return 0 on success, negative on error.
+ */
+int rnt_session_open(void* connection_context, char** session_hash_out);
+
+/**
+ * @brief Closes a session, unregistering it from /system/sessions/<hash>.
+ *
+ * After this call the session hash is invalid; subsequent rnt_session_* or
+ * resolver lookups against it will fail. Branch overrides held by the
+ * session are dropped.
+ *
+ * @param session_hash  Hash returned by rnt_session_open.
+ * @return 0 on success, negative when the hash does not match an active session.
+ */
+int rnt_session_close(const char* session_hash);
+
+/**
+ * @brief Sets a per-session override for a branch.
+ *
+ * While the override is in effect, paths resolved through
+ * /system/sessions/<hash>/branches/<branch_name>/... point at
+ * /system/snapshots/<target_hash>/... regardless of where the global branch
+ * HEAD currently sits. Pass an empty string for @p target_hash to remove
+ * the override and resume falling back to the global branch.
+ *
+ * Non-empty target hashes must correspond to an existing
+ * /system/snapshots/<target_hash> entry; otherwise the call fails.
+ *
+ * @param session_hash  Session identifier.
+ * @param branch_name   Branch the override applies to (e.g. "main").
+ * @param target_hash   Snapshot hash to bind, or "" to clear.
+ * @return 0 on success, negative on error.
+ */
+int rnt_session_set_branch(const char* session_hash,
+                           const char* branch_name,
+                           const char* target_hash);
+
+/* ------------------------------------------------------------------ */
 /* Handle lifecycle                                                     */
 /* ------------------------------------------------------------------ */
 

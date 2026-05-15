@@ -18,6 +18,7 @@
 #include <cstring>
 #include <memory>
 #include <mutex>
+#include <random>
 #include <sstream>
 #include <stdexcept>
 #include <string>
@@ -134,6 +135,46 @@ namespace
         // readers never contend. GC is gated by reference_count only.
         t->exclusive = false;
         return t;
+    }
+
+    static std::unique_ptr<nt::ObjectManager::object_type> make_session_type()
+    {
+        auto t      = std::make_unique<nt::ObjectManager::object_type>();
+        t->label    = SESSION;
+        // Sessions live only as long as their connection; rnt_session_close
+        // removes them via ObjectManager::Unregister.
+        t->disposable = true;
+        t->methods  = { OPEN, CLOSE };
+        // Multiple readers/writers may consult a session concurrently to read
+        // overrides; contention is only enforced when an exclusive mutator
+        // (set_branch) is wired up. Default to non-exclusive for now.
+        t->exclusive = false;
+        return t;
+    }
+
+    // Generates a random 256-bit hex hash for naming a session. Hashes are
+    // drawn from std::random_device-seeded mt19937_64; we do not need
+    // cryptographic strength here, just enough entropy that two concurrent
+    // rnt_session_open calls cannot collide.
+    static std::string random_session_hash()
+    {
+        static thread_local std::mt19937_64 rng{ std::random_device{}() };
+        static const char hex[] = "0123456789abcdef";
+
+        std::string out;
+        out.reserve(64);
+        for (int i = 0; i < 4; ++i)
+        {
+            uint64_t v = rng();
+            for (int b = 0; b < 8; ++b)
+            {
+                uint8_t byte = static_cast<uint8_t>(v & 0xFF);
+                out.push_back(hex[(byte >> 4) & 0xF]);
+                out.push_back(hex[byte & 0xF]);
+                v >>= 8;
+            }
+        }
+        return out;
     }
 
     // Serializes the (name, merkle_root) pairs into the storage backend and
@@ -361,6 +402,66 @@ int rnt_firewall(const char* /*auth_method*/, char** claims_out)
     if (!is_initialized() || !claims_out) return -1;
     // PermissionsManager::Firewall is stubbed; grant all claims for now.
     *claims_out = heap_str("READ WRITE");
+    return 0;
+}
+
+int rnt_session_open(void* connection_context, char** session_hash_out)
+{
+    if (!is_initialized() || !session_hash_out) return -1;
+
+    // Retry on the astronomically unlikely event of a hash collision against
+    // an already-registered session.
+    std::string hash;
+    for (int attempts = 0; attempts < 8; ++attempts)
+    {
+        hash = random_session_hash();
+        const auto session_path = split_path(("/system/sessions/" + hash).c_str());
+        if (g_rt->objects.Find(session_path) != nullptr) continue;
+
+        auto session = std::make_unique<nt::ObjectManager::Session>();
+        session->connection_context = connection_context;
+        g_rt->objects.Register(session_path, std::move(session), make_session_type());
+        *session_hash_out = heap_str(hash);
+        return 0;
+    }
+    return -1;
+}
+
+int rnt_session_close(const char* session_hash)
+{
+    if (!is_initialized() || !session_hash) return -1;
+    const auto session_path = split_path(
+        ("/system/sessions/" + std::string(session_hash)).c_str());
+    return g_rt->objects.Unregister(session_path) ? 0 : -1;
+}
+
+int rnt_session_set_branch(const char* session_hash,
+                           const char* branch_name,
+                           const char* target_hash)
+{
+    if (!is_initialized() || !session_hash || !branch_name || !target_hash)
+        return -1;
+
+    const auto session_path = split_path(
+        ("/system/sessions/" + std::string(session_hash)).c_str());
+    auto* entry = g_rt->objects.Find(session_path);
+    if (!entry || !entry->object || !entry->head) return -1;
+    if (entry->head->type->label != SESSION) return -1;
+
+    auto* session = dynamic_cast<nt::ObjectManager::Session*>(entry->object.get());
+    if (!session) return -1;
+
+    const std::string hash(target_hash);
+    if (hash.empty())
+    {
+        session->branch_overrides.erase(branch_name);
+        return 0;
+    }
+
+    const auto snap_path = split_path(("/system/snapshots/" + hash).c_str());
+    if (g_rt->objects.Find(snap_path) == nullptr) return -1;
+
+    session->branch_overrides[branch_name] = hash;
     return 0;
 }
 

@@ -30,4 +30,19 @@ namespace nt
         }
         return nullptr;
     }
+
+    bool ObjectManager::Unregister(const std::vector<std::string>& object_path)
+    {
+        std::unique_ptr<registry>* slot = &entries;
+        while (slot->get() != nullptr)
+        {
+            if ((*slot)->head->path == object_path)
+            {
+                *slot = std::move((*slot)->next);
+                return true;
+            }
+            slot = &(*slot)->next;
+        }
+        return false;
+    }
 }

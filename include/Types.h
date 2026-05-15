@@ -58,7 +58,22 @@ enum OBJECT_TYPE {
      * The `exclusive` flag on the object_type should be set to true so that
      * LifecycleManager::Contention serializes concurrent writers.
      */
-    BRANCH
+    BRANCH,
+    /**
+     * A per-connection runtime context. SESSION objects own the
+     * connection_context pointer (auth metadata, etc.) and a map of per-session
+     * branch overrides: `branch_name -> target_hash`. Overrides let one
+     * connection observe a different snapshot for a branch than the global
+     * HEAD without affecting other sessions.
+     *
+     * Sessions are identified by random 256-bit hex hashes minted at
+     * rnt_session_open. The hash is opaque to the caller and is the only
+     * handle for subsequent rnt_session_* calls. SESSION objects live at
+     * /system/sessions/<hash>; the resolver consults
+     * /system/sessions/<hash>/branches/<n> first and falls back to the global
+     * /system/branches/<n> when there is no override.
+     */
+    SESSION
 };
 
 /** @brief Operations that may be supported by an object type. */
