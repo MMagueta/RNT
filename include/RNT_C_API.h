@@ -46,15 +46,15 @@ typedef void* rnt_handle_t;
 typedef void* rnt_cursor_t;
 
 /* ------------------------------------------------------------------ */
-/* Runtime lifecycle                                                    */
+/* Runtime lifecycle                                                  */
 /* ------------------------------------------------------------------ */
 
 /**
- * @brief Initialises the RNT runtime with the selected storage backend.
+ * @brief Initializes the RNT runtime with the selected storage backend.
  *
  * Must be called before any other API function. Once the runtime is
- * successfully initialised, subsequent calls are no-ops and return 0.
- * If initialisation fails (returns negative), the call may be retried
+ * successfully initialized, subsequent calls are no-ops and return 0.
+ * If initialization fails (returns negative), the call may be retried
  * with corrected parameters — the runtime is left in a clean state.
  *
  * @param driver        Storage driver to use: "sqlite" or "memory".

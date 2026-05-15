@@ -40,14 +40,13 @@ namespace
         nt::IdentityManager    identities;
         nt::LifecycleManager   lifecycles;
         std::unique_ptr<nt::HandlerManager> handler;
-        std::unique_ptr<nt::CursorManager>  cursors;
+      std::unique_ptr<nt::CursorManager>  cursors;
     };
 
     static std::unique_ptr<Runtime> g_rt;
-    static std::mutex               g_init_mutex;
     static bool                     g_init_done = false;
 
-    bool is_init() { return g_init_done; }
+    bool is_initialized() { return g_init_done; }
 
     static std::vector<std::string> split_path(const char* path)
     {
@@ -187,9 +186,6 @@ namespace
 
 int rnt_init(const char* driver, const char* storage_path)
 {
-    std::lock_guard<std::mutex> lock(g_init_mutex);
-    if (g_init_done) return 0;
-
     try
     {
         auto rt = std::make_unique<Runtime>();
@@ -208,12 +204,12 @@ int rnt_init(const char* driver, const char* storage_path)
 
         // Register the default branch on first boot so that
         // rnt_open_handle("/system/branches/master") always succeeds.
-        const auto main_path = split_path("/system/branches/master");
-        if (g_rt->objects.Find(main_path) == nullptr)
+        const auto master_path = split_path("/system/branches/master");
+        if (g_rt->objects.Find(master_path) == nullptr)
         {
             auto branch  = std::make_unique<nt::ObjectManager::Branch>();
             branch->name = "master";
-            g_rt->objects.Register(main_path, std::move(branch),
+            g_rt->objects.Register(master_path, std::move(branch),
                                    make_branch_type());
         }
 
@@ -229,7 +225,7 @@ int rnt_init(const char* driver, const char* storage_path)
 
 int rnt_firewall(const char* /*auth_method*/, char** claims_out)
 {
-    if (!is_init() || !claims_out) return -1;
+    if (!is_initialized() || !claims_out) return -1;
     // PermissionsManager::Firewall is stubbed; grant all claims for now.
     *claims_out = heap_str("READ WRITE");
     return 0;
@@ -237,20 +233,20 @@ int rnt_firewall(const char* /*auth_method*/, char** claims_out)
 
 rnt_handle_t rnt_open_handle(const char* path, const char* /*claims*/)
 {
-    if (!is_init() || !path) return nullptr;
+    if (!is_initialized() || !path) return nullptr;
     return g_rt->handler->Open(split_path(path), nullptr);
 }
 
 int rnt_close_handle(rnt_handle_t handle)
 {
-    if (!is_init() || !handle) return -1;
+    if (!is_initialized() || !handle) return -1;
     auto* h = static_cast<nt::HandlerManager::handle*>(handle);
     return g_rt->handler->Close(h) ? 0 : -1;
 }
 
 int rnt_branch_payload(rnt_handle_t handle, uint8_t** payload_out, size_t* len_out)
 {
-    if (!is_init() || !handle || !payload_out || !len_out) return -1;
+    if (!is_initialized() || !handle || !payload_out || !len_out) return -1;
 
     auto* h = static_cast<nt::HandlerManager::handle*>(handle);
     if (!h->object || !h->object->head) return -1;
@@ -269,7 +265,7 @@ int rnt_branch_payload(rnt_handle_t handle, uint8_t** payload_out, size_t* len_o
 
 int rnt_branch_set_payload(rnt_handle_t handle, const uint8_t* payload, size_t len)
 {
-    if (!is_init() || !handle) return -1;
+    if (!is_initialized() || !handle) return -1;
 
     auto* h = static_cast<nt::HandlerManager::handle*>(handle);
     if (!h->object || !h->object->head) return -1;
@@ -284,7 +280,7 @@ int rnt_branch_set_payload(rnt_handle_t handle, const uint8_t* payload, size_t l
 
 int rnt_register_relation(const char* path)
 {
-    if (!is_init() || !path) return -1;
+    if (!is_initialized() || !path) return -1;
     const auto parts = split_path(path);
     if (g_rt->objects.Find(parts) != nullptr) return 0;
     g_rt->objects.Register(
@@ -296,7 +292,7 @@ int rnt_register_relation(const char* path)
 
 int rnt_register_branch(const char* path, const uint8_t* payload, size_t payload_len)
 {
-    if (!is_init() || !path) return -1;
+    if (!is_initialized() || !path) return -1;
     const auto parts = split_path(path);
     if (g_rt->objects.Find(parts) != nullptr) return 0;
 
@@ -319,7 +315,7 @@ static nt::ObjectManager::Relation* find_relation(const std::vector<std::string>
 
 int rnt_link_tuple(const char* relation_path, const char* kv_attrs, char** hash_out)
 {
-    if (!is_init() || !relation_path || !kv_attrs || !hash_out) return -1;
+    if (!is_initialized() || !relation_path || !kv_attrs || !hash_out) return -1;
     const auto parts = split_path(relation_path);
 
     auto* rel = find_relation(parts);
@@ -336,7 +332,7 @@ int rnt_link_tuple(const char* relation_path, const char* kv_attrs, char** hash_
 
 int rnt_unlink_tuple(const char* relation_path, const char* tuple_hash)
 {
-    if (!is_init() || !relation_path || !tuple_hash) return -1;
+    if (!is_initialized() || !relation_path || !tuple_hash) return -1;
     auto* rel = find_relation(split_path(relation_path));
     if (!rel) return -1;
     rel->merkle_root = nt::Merkle::Remove(*g_rt->storage, rel->merkle_root, tuple_hash);
@@ -345,7 +341,7 @@ int rnt_unlink_tuple(const char* relation_path, const char* tuple_hash)
 
 int rnt_clear_relation(const char* relation_path)
 {
-    if (!is_init() || !relation_path) return -1;
+    if (!is_initialized() || !relation_path) return -1;
     auto* rel = find_relation(split_path(relation_path));
     if (!rel) return -1;
     rel->merkle_root.clear();
@@ -354,7 +350,7 @@ int rnt_clear_relation(const char* relation_path)
 
 int rnt_relation_root(const char* relation_path, char** root_hash_out)
 {
-    if (!is_init() || !relation_path || !root_hash_out) return -1;
+    if (!is_initialized() || !relation_path || !root_hash_out) return -1;
     auto* rel = find_relation(split_path(relation_path));
     if (!rel) return -1;
     *root_hash_out = heap_str(rel->merkle_root);
@@ -363,7 +359,7 @@ int rnt_relation_root(const char* relation_path, char** root_hash_out)
 
 int rnt_set_relation_root(const char* relation_path, const char* root_hash)
 {
-    if (!is_init() || !relation_path) return -1;
+    if (!is_initialized() || !relation_path) return -1;
     auto* rel = find_relation(split_path(relation_path));
     if (!rel) return -1;
     rel->merkle_root = root_hash ? root_hash : "";
@@ -372,7 +368,7 @@ int rnt_set_relation_root(const char* relation_path, const char* root_hash)
 
 rnt_cursor_t rnt_cursor_open(rnt_handle_t handle)
 {
-    if (!is_init() || !handle) return nullptr;
+    if (!is_initialized() || !handle) return nullptr;
     auto* h = static_cast<nt::HandlerManager::handle*>(handle);
 
     std::string merkle_root;
@@ -388,7 +384,7 @@ rnt_cursor_t rnt_cursor_open(rnt_handle_t handle)
 
 int rnt_cursor_next(rnt_cursor_t cursor, char** tuple_out)
 {
-    if (!is_init() || !cursor || !tuple_out) return -1;
+    if (!is_initialized() || !cursor || !tuple_out) return -1;
     auto* c = static_cast<nt::CursorManager::cursor*>(cursor);
     nt::Tuple* t = g_rt->cursors->Next(c);
     if (!t) { *tuple_out = nullptr; return 0; }
@@ -398,7 +394,7 @@ int rnt_cursor_next(rnt_cursor_t cursor, char** tuple_out)
 
 int rnt_cursor_close(rnt_cursor_t cursor)
 {
-    if (!is_init() || !cursor) return -1;
+    if (!is_initialized() || !cursor) return -1;
     g_rt->cursors->Close(static_cast<nt::CursorManager::cursor*>(cursor));
     return 0;
 }
@@ -412,7 +408,7 @@ void rnt_free_bytes(uint8_t* p) { delete[] p; }
 
 rnt_plan_t rnt_plan_scan(const char* relation_path)
 {
-    if (!is_init() || !relation_path) return nullptr;
+    if (!is_initialized() || !relation_path) return nullptr;
 
     // Open a handle to the stored relation through the full manager pipeline.
     const auto parts = split_path(relation_path);
@@ -507,14 +503,14 @@ void rnt_plan_free(rnt_plan_t plan)
 
 rnt_cursor_t rnt_vm_execute_plan(rnt_plan_t plan)
 {
-    if (!is_init() || !plan) return nullptr;
+    if (!is_initialized() || !plan) return nullptr;
     // VmCursor constructor transfers ownership from PlanWrapper and deletes it.
     return new VmCursor(*g_rt->cursors, static_cast<PlanWrapper*>(plan));
 }
 
 int rnt_vm_cursor_next(rnt_cursor_t vm_cursor, char** tuple_out)
 {
-    if (!is_init() || !vm_cursor || !tuple_out) return -1;
+    if (!is_initialized() || !vm_cursor || !tuple_out) return -1;
     auto* vc = static_cast<VmCursor*>(vm_cursor);
     nt::Tuple* t = vc->vm.Next(vc->root);
     if (!t) { *tuple_out = nullptr; return 0; }
@@ -524,7 +520,7 @@ int rnt_vm_cursor_next(rnt_cursor_t vm_cursor, char** tuple_out)
 
 int rnt_vm_cursor_close(rnt_cursor_t vm_cursor)
 {
-    if (!is_init() || !vm_cursor) return -1;
+    if (!is_initialized() || !vm_cursor) return -1;
     // VmCursor destructor closes all cursors and handles.
     delete static_cast<VmCursor*>(vm_cursor);
     return 0;
