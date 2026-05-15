@@ -33,8 +33,25 @@ namespace nt
             virtual ~IObject() = default;
         };
 
-        /** @brief Abstract registry object representing a multigroup. */
-        class Multigroup : public IObject {};
+        /**
+         * @brief Registry object representing a multigroup snapshot.
+         *
+         * merkle_root is the SHA256 hex digest of the serialized child relation
+         * list (name, merkle_root) pairs in sorted order — computed by
+         * MultigroupCodec::Hash and persisted via IStorageBackend::Put when the
+         * snapshot is committed.
+         *
+         * Every commit produces a new Multigroup entry under
+         * /system/snapshots/<merkle_root>. Snapshots are immutable
+         * (disposable=false, exclusive=false); the rest of the system refers
+         * to them by hash. A Multigroup is eligible for GC only when its
+         * reference_count drops to zero (no branch HEAD, no session override,
+         * no pinned cursor still references it).
+         */
+        class Multigroup : public IObject {
+        public:
+            std::string merkle_root;
+        };
         /**
          * @brief Registry object representing a stored relation.
          *
@@ -45,6 +62,40 @@ namespace nt
         class Relation : public IObject {
         public:
             std::string merkle_root;
+        };
+        /**
+         * @brief Registry object representing an ephemeral relation.
+         *
+         * Ephemeral relations have no tuple storage of their own; tuples are
+         * produced on demand by the generator function declared in the
+         * ephemeral_object_type descriptor. They compose into a multigroup's
+         * hash on equal footing with stored relations — only `merkle_root`
+         * participates in MultigroupCodec::Hash, regardless of how it was
+         * derived.
+         *
+         * `merkle_root` is the SHA256 hex digest derived from the generator's
+         * identity, the current schema, and the merkle_roots of the declared
+         * base relations. Any mutation to structure or rebinding of a base
+         * produces a new merkle_root, which then propagates into a new
+         * multigroup snapshot exactly like a tuple insertion in a stored
+         * relation.
+         *
+         * `dependencies` lists the logical paths of base relations this
+         * ephemeral relation is defined atop of. The lifecycle manager Pins
+         * each entry while this object is alive, preventing GC of a stored
+         * relation that still backs an ephemeral one. The dependency list is
+         * also the foundation for attribute-level provenance tracking added
+         * later.
+         *
+         * @todo Define the merkle_root composition function (hashes the
+         *       generator identity + schema + sorted base merkle_roots).
+         *       Until ephemeral relations are registered through a writer
+         *       path this remains a documentation-only contract.
+         */
+        class EphemeralRelation : public IObject {
+        public:
+            std::string              merkle_root;
+            std::vector<std::string> dependencies;
         };
         /** @brief Abstract registry object representing a transaction. */
         class Transaction : public IObject {};

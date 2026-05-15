@@ -5,6 +5,7 @@
 #include "IdentityManager.h"
 #include "LifecycleManager.h"
 #include "Merkle.h"
+#include "MultigroupCodec.h"
 #include "ObjectManager.h"
 #include "PermissionsManager.h"
 #include "InMemoryBackend.h"
@@ -118,6 +119,42 @@ namespace
         // LifecycleManager::Contention.
         t->exclusive = true;
         return t;
+    }
+
+    static std::unique_ptr<nt::ObjectManager::object_type> make_multigroup_type()
+    {
+        auto t      = std::make_unique<nt::ObjectManager::object_type>();
+        t->label    = MULTIGROUP;
+        t->disposable = false;
+        t->methods  = { OPEN, CLOSE };
+        // Multigroup snapshots are immutable and content-addressed; concurrent
+        // readers never contend. GC is gated by reference_count only.
+        t->exclusive = false;
+        return t;
+    }
+
+    // Serializes the (name, merkle_root) pairs into the storage backend and
+    // registers the resulting snapshot under /system/snapshots/<hash>. Idempotent:
+    // if a snapshot with this hash already exists in the registry the existing
+    // entry is reused. Returns the multigroup hash, or empty string on error.
+    //
+    // This is the registration plumbing only; step 3 (copy-on-write writes) is
+    // what will invoke it from inside the link/unlink path.
+    static std::string register_snapshot(
+        const std::vector<nt::MultigroupCodec::RelationEntry>& relations)
+    {
+        if (!g_rt) return {};
+
+        const std::string hash = nt::MultigroupCodec::Store(*g_rt->storage, relations);
+        const auto path = split_path(("/system/snapshots/" + hash).c_str());
+
+        if (g_rt->objects.Find(path) == nullptr)
+        {
+            auto mg = std::make_unique<nt::ObjectManager::Multigroup>();
+            mg->merkle_root = hash;
+            g_rt->objects.Register(path, std::move(mg), make_multigroup_type());
+        }
+        return hash;
     }
 
     // -----------------------------------------------------------------------
