@@ -1,6 +1,10 @@
 #pragma once
 
 #include "Api.h"
+#include "ObjectManager.h"
+
+#include <string>
+#include <vector>
 
 /**
  * @file NamespaceReferenceManager.h
@@ -64,5 +68,37 @@ namespace nt
      */
     class NT_API NamespaceReferenceManager
     {
+    public:
+        /**
+         * @brief Constructs a NamespaceReferenceManager bound to a registry.
+         * @param objects Registry used to look up reference objects (branches,
+         *                sessions) during reparse.
+         */
+        explicit NamespaceReferenceManager(ObjectManager& objects);
+
+        /**
+         * @brief Rewrites a logical path through reference reparse rules.
+         *
+         * Currently handles branch references:
+         *   /system/branches/<name>/<sub>... → /system/snapshots/<target_hash>/<sub>...
+         * where target_hash is the value stored on the named Branch object. When
+         * the branch is unborn (target_hash empty) or the rest of the path is
+         * empty (caller is opening the branch object itself, not something
+         * under it), the path is returned unchanged.
+         *
+         * Session paths (/system/sessions/<X>/branches/<name>/...) will be
+         * added when SESSION objects exist; for now they are returned as-is.
+         *
+         * A 30-iteration cycle guard mirrors the ReactOS reparse cap. If the
+         * guard trips the returned path is empty, signaling failure to the
+         * caller (Find will subsequently miss).
+         *
+         * @param path Input logical path components.
+         * @return Resolved path components, or empty vector on cycle/failure.
+         */
+        std::vector<std::string> Resolve(std::vector<std::string> path) const;
+
+    private:
+        ObjectManager& objects_;
     };
 }

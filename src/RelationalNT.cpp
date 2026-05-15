@@ -6,6 +6,7 @@
 #include "IdentityManager.h"
 #include "LifecycleManager.h"
 #include "Merkle.h"
+#include "NamespaceReferenceManager.h"
 #include "ObjectManager.h"
 #include "PermissionsManager.h"
 #include "SqliteBackend.h"
@@ -63,7 +64,8 @@ int main()
     nt::PermissionsManager permissions;
     nt::IdentityManager identities;
     nt::LifecycleManager lifecycles;
-    nt::HandlerManager handler(objects, permissions, identities, lifecycles);
+    nt::NamespaceReferenceManager references(objects);
+    nt::HandlerManager handler(objects, permissions, identities, lifecycles, references);
 
     int connection = 1;  // dummy connection context
     nt::HandlerManager::handle* handle = handler.Open(path, &connection);

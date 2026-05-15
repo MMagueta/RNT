@@ -2,6 +2,7 @@
 
 #include "IdentityManager.h"
 #include "LifecycleManager.h"
+#include "NamespaceReferenceManager.h"
 #include "PermissionsManager.h"
 
 namespace nt
@@ -14,16 +15,19 @@ namespace nt
     HandlerManager::HandlerManager(ObjectManager& objects,
                                        PermissionsManager& permissions,
                                        IdentityManager& identities,
-                                       LifecycleManager& lifecycles)
+                                       LifecycleManager& lifecycles,
+                                       NamespaceReferenceManager& references)
         : objects_(objects)
         , permissions_(permissions)
         , identities_(identities)
         , lifecycles_(lifecycles)
+        , references_(references)
     {}
 
     struct HandlerManager::handle* HandlerManager::Open(std::vector<std::string> object_path, void* connection_context)
     {
-        ObjectManager::registry* retrieved_object = objects_.Find((const std::vector<std::string>)object_path);
+        const auto resolved = references_.Resolve(std::move(object_path));
+        ObjectManager::registry* retrieved_object = objects_.Find(resolved);
         if (permissions_.Access(retrieved_object, (const void*)connection_context)
             && identities_.CanOpen(retrieved_object)
             && lifecycles_.Contention(retrieved_object)) {

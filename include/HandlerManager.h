@@ -17,6 +17,7 @@ namespace nt
 {
     class IdentityManager;
     class LifecycleManager;
+    class NamespaceReferenceManager;
     class PermissionsManager;
 
     /** @brief Opens and closes authorized handles to registry objects. */
@@ -33,7 +34,8 @@ namespace nt
         HandlerManager(ObjectManager& objects,
                        PermissionsManager& permissions,
                        IdentityManager& identities,
-                       LifecycleManager& lifecycles);
+                       LifecycleManager& lifecycles,
+                       NamespaceReferenceManager& references);
 
         /**
          * @brief Represents authorized access to an object in the registry.
@@ -93,5 +95,6 @@ namespace nt
         PermissionsManager& permissions_;
         IdentityManager& identities_;
         LifecycleManager& lifecycles_;
+        NamespaceReferenceManager& references_;
     };
 }

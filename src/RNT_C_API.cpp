@@ -6,6 +6,7 @@
 #include "LifecycleManager.h"
 #include "Merkle.h"
 #include "MultigroupCodec.h"
+#include "NamespaceReferenceManager.h"
 #include "ObjectManager.h"
 #include "PermissionsManager.h"
 #include "InMemoryBackend.h"
@@ -13,6 +14,7 @@
 #include "TupleCodec.h"
 #include "VM.h"
 
+#include <algorithm>
 #include <cstring>
 #include <memory>
 #include <mutex>
@@ -40,8 +42,9 @@ namespace
         nt::PermissionsManager permissions;
         nt::IdentityManager    identities;
         nt::LifecycleManager   lifecycles;
+        std::unique_ptr<nt::NamespaceReferenceManager> references;
         std::unique_ptr<nt::HandlerManager> handler;
-      std::unique_ptr<nt::CursorManager>  cursors;
+        std::unique_ptr<nt::CursorManager>  cursors;
     };
 
     static std::unique_ptr<Runtime> g_rt;
@@ -134,27 +137,118 @@ namespace
     }
 
     // Serializes the (name, merkle_root) pairs into the storage backend and
-    // registers the resulting snapshot under /system/snapshots/<hash>. Idempotent:
-    // if a snapshot with this hash already exists in the registry the existing
-    // entry is reused. Returns the multigroup hash, or empty string on error.
+    // registers the resulting snapshot under /system/snapshots/<hash>, along
+    // with one Relation entry per child at /system/snapshots/<hash>/relations/<n>.
+    // Idempotent: if the snapshot already exists in the registry the existing
+    // entries are reused. Returns the multigroup hash, or empty string on error.
     //
-    // This is the registration plumbing only; step 3 (copy-on-write writes) is
-    // what will invoke it from inside the link/unlink path.
+    // Child Relation entries are immutable: their merkle_root is fixed at
+    // snapshot creation time. Cursors opened against them read the relation's
+    // Merkle B-tree at the exact root the snapshot recorded.
     static std::string register_snapshot(
         const std::vector<nt::MultigroupCodec::RelationEntry>& relations)
     {
         if (!g_rt) return {};
 
         const std::string hash = nt::MultigroupCodec::Store(*g_rt->storage, relations);
-        const auto path = split_path(("/system/snapshots/" + hash).c_str());
+        const auto snap_path = split_path(("/system/snapshots/" + hash).c_str());
 
-        if (g_rt->objects.Find(path) == nullptr)
+        if (g_rt->objects.Find(snap_path) != nullptr) return hash;
+
+        auto mg = std::make_unique<nt::ObjectManager::Multigroup>();
+        mg->merkle_root = hash;
+        g_rt->objects.Register(snap_path, std::move(mg), make_multigroup_type());
+
+        for (const auto& [name, root] : relations)
         {
-            auto mg = std::make_unique<nt::ObjectManager::Multigroup>();
-            mg->merkle_root = hash;
-            g_rt->objects.Register(path, std::move(mg), make_multigroup_type());
+            const auto rel_path = split_path(
+                ("/system/snapshots/" + hash + "/relations/" + name).c_str());
+            if (g_rt->objects.Find(rel_path) != nullptr) continue;
+
+            auto rel = std::make_unique<nt::ObjectManager::Relation>();
+            rel->merkle_root = root;
+            g_rt->objects.Register(rel_path, std::move(rel), make_relation_type());
         }
         return hash;
+    }
+
+    // Reads the current snapshot's (name, root) list for a branch. Returns an
+    // empty vector for unborn branches or any lookup failure.
+    static std::vector<nt::MultigroupCodec::RelationEntry> read_branch_relations(
+        const nt::ObjectManager::Branch& branch)
+    {
+        if (branch.target_hash.empty()) return {};
+
+        const auto snap_path = split_path(
+            ("/system/snapshots/" + branch.target_hash).c_str());
+        auto* entry = g_rt->objects.Find(snap_path);
+        if (!entry || !entry->object) return {};
+
+        auto* mg = dynamic_cast<nt::ObjectManager::Multigroup*>(entry->object.get());
+        if (!mg) return {};
+
+        auto opt = g_rt->storage->Get(mg->merkle_root);
+        if (!opt) return {};
+        return nt::MultigroupCodec::Deserialize(*opt);
+    }
+
+    // Looks up a branch object by path. Returns nullptr when the path does not
+    // resolve to a BRANCH.
+    static nt::ObjectManager::Branch* find_branch(
+        const std::vector<std::string>& branch_path)
+    {
+        auto* entry = g_rt->objects.Find(branch_path);
+        if (!entry || !entry->object || !entry->head) return nullptr;
+        if (entry->head->type->label != BRANCH) return nullptr;
+        return dynamic_cast<nt::ObjectManager::Branch*>(entry->object.get());
+    }
+
+    // Parses a path of the form /system/branches/<name>/relations/<relation_name>.
+    // Returns true on success; out-parameters are populated with the branch path
+    // and the relation name. Returns false for any other path shape.
+    static bool split_branch_relation(const std::vector<std::string>& parts,
+                                      std::vector<std::string>& branch_path_out,
+                                      std::string& relation_name_out)
+    {
+        if (parts.size() != 5) return false;
+        if (parts[0] != "system" || parts[1] != "branches" || parts[3] != "relations")
+            return false;
+        branch_path_out = { "system", "branches", parts[2] };
+        relation_name_out = parts[4];
+        return true;
+    }
+
+    // Applies a per-relation merkle_root update to the branch's current snapshot:
+    // reads the existing (name, root) list, replaces or appends (relation_name,
+    // new_root), registers the resulting snapshot, and advances the branch.
+    // Returns the new snapshot hash, or empty string on error.
+    static std::string commit_relation_update(
+        nt::ObjectManager::Branch& branch,
+        const std::string& relation_name,
+        const std::string& new_root)
+    {
+        auto relations = read_branch_relations(branch);
+        auto it = std::find_if(relations.begin(), relations.end(),
+                               [&](const auto& e) { return e.first == relation_name; });
+        if (it != relations.end()) it->second = new_root;
+        else relations.emplace_back(relation_name, new_root);
+
+        const std::string new_snapshot_hash = register_snapshot(relations);
+        if (new_snapshot_hash.empty()) return {};
+        branch.target_hash = new_snapshot_hash;
+        return new_snapshot_hash;
+    }
+
+    // Returns the merkle_root of a named relation in the branch's current
+    // snapshot. Empty string when the branch is unborn or the relation is
+    // absent.
+    static std::string read_relation_root(const nt::ObjectManager::Branch& branch,
+                                          const std::string& relation_name)
+    {
+        const auto relations = read_branch_relations(branch);
+        auto it = std::find_if(relations.begin(), relations.end(),
+                               [&](const auto& e) { return e.first == relation_name; });
+        return (it == relations.end()) ? std::string{} : it->second;
     }
 
     // -----------------------------------------------------------------------
@@ -234,8 +328,10 @@ int rnt_init(const char* driver, const char* storage_path)
             rt->storage = std::make_unique<nt::SqliteBackend>(
                 storage_path ? storage_path : ":memory:");
 
+        rt->references = std::make_unique<nt::NamespaceReferenceManager>(rt->objects);
         rt->handler = std::make_unique<nt::HandlerManager>(
-            rt->objects, rt->permissions, rt->identities, rt->lifecycles);
+            rt->objects, rt->permissions, rt->identities, rt->lifecycles,
+            *rt->references);
         rt->cursors = std::make_unique<nt::CursorManager>(*rt->storage);
         g_rt = std::move(rt);
 
@@ -322,12 +418,24 @@ int rnt_register_relation(const char* path)
 {
     if (!is_initialized() || !path) return -1;
     const auto parts = split_path(path);
-    if (g_rt->objects.Find(parts) != nullptr) return 0;
-    g_rt->objects.Register(
-        parts,
-        std::make_unique<nt::ObjectManager::Relation>(),
-        make_relation_type());
-    return 0;
+
+    std::vector<std::string> branch_path;
+    std::string relation_name;
+    if (!split_branch_relation(parts, branch_path, relation_name)) return -1;
+
+    auto* branch = find_branch(branch_path);
+    if (!branch) return -1;
+
+    // Idempotent: if the relation is already present in the branch's current
+    // snapshot, the call succeeds without producing a new snapshot.
+    const auto current = read_branch_relations(*branch);
+    const bool already_present = std::any_of(
+        current.begin(), current.end(),
+        [&](const auto& e) { return e.first == relation_name; });
+    if (already_present) return 0;
+
+    // Empty merkle_root signals a relation with no tuples.
+    return commit_relation_update(*branch, relation_name, "").empty() ? -1 : 0;
 }
 
 int rnt_register_branch(const char* path, const char* target_hash)
@@ -351,64 +459,80 @@ int rnt_register_branch(const char* path, const char* target_hash)
     return 0;
 }
 
-// Looks up the Relation object for a path; returns nullptr when not found or wrong type.
-static nt::ObjectManager::Relation* find_relation(const std::vector<std::string>& parts)
-{
-    auto* entry = g_rt->objects.Find(parts);
-    if (!entry || !entry->object) return nullptr;
-    return dynamic_cast<nt::ObjectManager::Relation*>(entry->object.get());
-}
-
 int rnt_link_tuple(const char* relation_path, const char* kv_attrs, char** hash_out)
 {
     if (!is_initialized() || !relation_path || !kv_attrs || !hash_out) return -1;
     const auto parts = split_path(relation_path);
 
-    auto* rel = find_relation(parts);
-    if (!rel) return -1;
+    std::vector<std::string> branch_path;
+    std::string relation_name;
+    if (!split_branch_relation(parts, branch_path, relation_name)) return -1;
 
-    auto bytes      = nt::TupleCodec::Serialize(parse_kv(kv_attrs));
-    const auto hash = g_rt->storage->Put(std::move(bytes));
+    auto* branch = find_branch(branch_path);
+    if (!branch) return -1;
 
-    rel->merkle_root = nt::Merkle::Insert(*g_rt->storage, rel->merkle_root, hash);
+    const std::string old_root = read_relation_root(*branch, relation_name);
 
-    *hash_out = heap_str(hash);
+    auto bytes           = nt::TupleCodec::Serialize(parse_kv(kv_attrs));
+    const auto tuple_hash = g_rt->storage->Put(std::move(bytes));
+    const std::string new_root =
+        nt::Merkle::Insert(*g_rt->storage, old_root, tuple_hash);
+
+    if (commit_relation_update(*branch, relation_name, new_root).empty())
+        return -1;
+
+    *hash_out = heap_str(tuple_hash);
     return 0;
 }
 
 int rnt_unlink_tuple(const char* relation_path, const char* tuple_hash)
 {
     if (!is_initialized() || !relation_path || !tuple_hash) return -1;
-    auto* rel = find_relation(split_path(relation_path));
-    if (!rel) return -1;
-    rel->merkle_root = nt::Merkle::Remove(*g_rt->storage, rel->merkle_root, tuple_hash);
-    return 0;
+    const auto parts = split_path(relation_path);
+
+    std::vector<std::string> branch_path;
+    std::string relation_name;
+    if (!split_branch_relation(parts, branch_path, relation_name)) return -1;
+
+    auto* branch = find_branch(branch_path);
+    if (!branch) return -1;
+
+    const std::string old_root = read_relation_root(*branch, relation_name);
+    const std::string new_root =
+        nt::Merkle::Remove(*g_rt->storage, old_root, tuple_hash);
+
+    return commit_relation_update(*branch, relation_name, new_root).empty()
+        ? -1 : 0;
 }
 
 int rnt_clear_relation(const char* relation_path)
 {
     if (!is_initialized() || !relation_path) return -1;
-    auto* rel = find_relation(split_path(relation_path));
-    if (!rel) return -1;
-    rel->merkle_root.clear();
-    return 0;
+    const auto parts = split_path(relation_path);
+
+    std::vector<std::string> branch_path;
+    std::string relation_name;
+    if (!split_branch_relation(parts, branch_path, relation_name)) return -1;
+
+    auto* branch = find_branch(branch_path);
+    if (!branch) return -1;
+
+    return commit_relation_update(*branch, relation_name, "").empty() ? -1 : 0;
 }
 
 int rnt_relation_root(const char* relation_path, char** root_hash_out)
 {
     if (!is_initialized() || !relation_path || !root_hash_out) return -1;
-    auto* rel = find_relation(split_path(relation_path));
-    if (!rel) return -1;
-    *root_hash_out = heap_str(rel->merkle_root);
-    return 0;
-}
+    const auto parts = split_path(relation_path);
 
-int rnt_set_relation_root(const char* relation_path, const char* root_hash)
-{
-    if (!is_initialized() || !relation_path) return -1;
-    auto* rel = find_relation(split_path(relation_path));
-    if (!rel) return -1;
-    rel->merkle_root = root_hash ? root_hash : "";
+    std::vector<std::string> branch_path;
+    std::string relation_name;
+    if (!split_branch_relation(parts, branch_path, relation_name)) return -1;
+
+    auto* branch = find_branch(branch_path);
+    if (!branch) return -1;
+
+    *root_hash_out = heap_str(read_relation_root(*branch, relation_name));
     return 0;
 }
 
@@ -421,7 +545,7 @@ rnt_cursor_t rnt_cursor_open(rnt_handle_t handle)
     if (h->object && h->object->head &&
         h->object->head->type->label == RELATION)
     {
-        auto* rel = find_relation(h->object->head->path);
+        auto* rel = dynamic_cast<nt::ObjectManager::Relation*>(h->object->object.get());
         if (rel) merkle_root = rel->merkle_root;
     }
 
@@ -457,14 +581,21 @@ rnt_plan_t rnt_plan_scan(const char* relation_path)
     if (!is_initialized() || !relation_path) return nullptr;
 
     // Open a handle to the stored relation through the full manager pipeline.
+    // Open() runs NamespaceReferenceManager::Resolve internally, so the handle
+    // lands on the resolved /system/snapshots/<hash>/relations/<n> entry when
+    // the caller passed a branch-relative path.
     const auto parts = split_path(relation_path);
     auto* h = g_rt->handler->Open(parts, nullptr);
     if (!h) return nullptr;
 
-    // Seed the cursor with the current Merkle root from the ObjectManager.
+    // Read the Merkle root straight from the handle's object — Resolve has
+    // already pointed it at the snapshot-bound Relation entry.
     std::string merkle_root;
-    auto* rel = find_relation(parts);
-    if (rel) merkle_root = rel->merkle_root;
+    if (h->object && h->object->object)
+    {
+        auto* rel = dynamic_cast<nt::ObjectManager::Relation*>(h->object->object.get());
+        if (rel) merkle_root = rel->merkle_root;
+    }
 
     auto* c = g_rt->cursors->Open(h, merkle_root);
     if (!c)

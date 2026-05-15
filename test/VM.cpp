@@ -6,6 +6,7 @@
 #include "InMemoryBackend.h"
 #include "LifecycleManager.h"
 #include "Merkle.h"
+#include "NamespaceReferenceManager.h"
 #include "ObjectManager.h"
 #include "PermissionsManager.h"
 #include "TupleCodec.h"
@@ -75,7 +76,8 @@ struct Fixture
     nt::PermissionsManager permissions;
     nt::IdentityManager  identities;
     nt::LifecycleManager lifecycles;
-    nt::HandlerManager   handler { objects, permissions, identities, lifecycles };
+    nt::NamespaceReferenceManager references { objects };
+    nt::HandlerManager   handler { objects, permissions, identities, lifecycles, references };
     nt::CursorManager    cursors { backend };
     int conn = 1;
 };

@@ -235,21 +235,6 @@ int rnt_clear_relation(const char* relation_path);
  */
 int rnt_relation_root(const char* relation_path, char** root_hash_out);
 
-/**
- * @brief Writes a Merkle root hash into a relation's ObjectManager entry.
- *
- * Called by Sakura's open_branch during multigroup reconstruction: after
- * deserializing the branch payload, OCaml calls this function once per
- * relation to restore the persisted Merkle root into the in-memory
- * ObjectManager so that subsequent cursors see the correct tuple set.
- *
- * @param relation_path  Slash-separated relation path.
- * @param root_hash      64-character hex Merkle root, or empty string to mark
- *                       the relation as empty.
- * @return 0 on success, negative when the relation is not found.
- */
-int rnt_set_relation_root(const char* relation_path, const char* root_hash);
-
 /* ------------------------------------------------------------------ */
 /* Cursor and VM                                                        */
 /* ------------------------------------------------------------------ */
