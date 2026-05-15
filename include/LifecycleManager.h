@@ -26,6 +26,16 @@ namespace nt
     {
     public:
         /**
+         * @brief Constructs a LifecycleManager bound to a registry.
+         *
+         * Needs the registry to perform GC: Unmonitor and Unpin call
+         * ObjectManager::Unregister once both counters reach zero. Type-specific
+         * cleanup (e.g. cascading a Multigroup's pin to its child Relations)
+         * runs inside the lifecycle manager before the entry is spliced out.
+         */
+        explicit LifecycleManager(ObjectManager& objects);
+
+        /**
          * @brief Starts monitoring an object's lifecycle.
          *
          * Increments `handle_count` on the object's registry_head. Should be
@@ -76,6 +86,15 @@ namespace nt
         void Unpin(ObjectManager::registry* object);
 
         /**
+         * @brief Returns true when the object is GC-eligible right now.
+         *
+         * Eligibility is the joint condition handle_count == 0 &&
+         * reference_count == 0. Decrement callers (Unmonitor / Unpin) consult
+         * this and, when true, run type-specific cleanup before unregistering.
+         */
+        bool IsEligibleForGC(ObjectManager::registry* object) const;
+
+        /**
          * @brief Serializes contention for changes to mutable reference states.
          *
          * Immutable objects — relation snapshots, multigroup snapshots,
@@ -97,5 +116,34 @@ namespace nt
          * @return True when the operation may proceed.
          */
         const bool Contention(ObjectManager::registry* object);
+
+    private:
+        /**
+         * @brief Joint-counters check + type-specific cascade + Unregister.
+         *
+         * Called by Unmonitor and Unpin after their decrement. No-op when the
+         * object is still referenced. When eligible:
+         *   - MULTIGROUP entries first unpin every Relation registered under
+         *     their /system/snapshots/H/relations/ subtree, allowing the
+         *     cascade to continue.
+         *   - The entry is then removed from the registry; its IObject and
+         *     registry_head are freed.
+         *
+         * Inline GC for now; the reaper-queue deferred-deletion pattern from
+         * docs/reactos-ob-comparison.md §7 is a later optimisation.
+         */
+        void TryCollect(ObjectManager::registry* object);
+
+        /**
+         * @brief Releases pins held by a MULTIGROUP entry on its child Relations.
+         *
+         * Iterates the registry once, collects every /system/snapshots/<H>/
+         * relations/<n> entry, and calls Unpin on each. Triggered exclusively
+         * from TryCollect at the moment the parent snapshot becomes eligible
+         * for GC.
+         */
+        void CascadeMultigroup(ObjectManager::registry* multigroup);
+
+        ObjectManager& objects_;
     };
 }

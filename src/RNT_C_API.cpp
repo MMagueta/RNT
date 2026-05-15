@@ -42,7 +42,7 @@ namespace
         nt::ObjectManager      objects;
         nt::PermissionsManager permissions;
         nt::IdentityManager    identities;
-        nt::LifecycleManager   lifecycles;
+        nt::LifecycleManager   lifecycles{ objects };
         std::unique_ptr<nt::NamespaceReferenceManager> references;
         std::unique_ptr<nt::HandlerManager> handler;
         std::unique_ptr<nt::CursorManager>  cursors;
@@ -183,9 +183,9 @@ namespace
     // Idempotent: if the snapshot already exists in the registry the existing
     // entries are reused. Returns the multigroup hash, or empty string on error.
     //
-    // Child Relation entries are immutable: their merkle_root is fixed at
-    // snapshot creation time. Cursors opened against them read the relation's
-    // Merkle B-tree at the exact root the snapshot recorded.
+    // Each child Relation is Pinned by its parent Multigroup at creation time
+    // (reference_count starts at 1). LifecycleManager::CascadeMultigroup will
+    // release these pins when the Multigroup itself becomes GC-eligible.
     static std::string register_snapshot(
         const std::vector<nt::MultigroupCodec::RelationEntry>& relations)
     {
@@ -209,8 +209,30 @@ namespace
             auto rel = std::make_unique<nt::ObjectManager::Relation>();
             rel->merkle_root = root;
             g_rt->objects.Register(rel_path, std::move(rel), make_relation_type());
+
+            // Structural pin from the parent Multigroup; released by
+            // LifecycleManager::CascadeMultigroup at GC time.
+            g_rt->lifecycles.Pin(g_rt->objects.Find(rel_path));
         }
         return hash;
+    }
+
+    // Adjusts pins when a branch or session override moves its bound snapshot.
+    // Either side may be the empty string (unbound).
+    static void rebind_snapshot_pin(const std::string& old_hash,
+                                    const std::string& new_hash)
+    {
+        if (old_hash == new_hash) return;
+        if (!new_hash.empty())
+        {
+            const auto p = split_path(("/system/snapshots/" + new_hash).c_str());
+            g_rt->lifecycles.Pin(g_rt->objects.Find(p));
+        }
+        if (!old_hash.empty())
+        {
+            const auto p = split_path(("/system/snapshots/" + old_hash).c_str());
+            g_rt->lifecycles.Unpin(g_rt->objects.Find(p));
+        }
     }
 
     // Reads the current snapshot's (name, root) list for a branch. Returns an
@@ -263,6 +285,11 @@ namespace
     // reads the existing (name, root) list, replaces or appends (relation_name,
     // new_root), registers the resulting snapshot, and advances the branch.
     // Returns the new snapshot hash, or empty string on error.
+    //
+    // Pin/unpin transitions on the branch's bound snapshot are applied here:
+    // the new snapshot is pinned before the old one is unpinned, so an
+    // unchanged (idempotent) advance never sees the snapshot's ref_count
+    // briefly hit zero and get collected.
     static std::string commit_relation_update(
         nt::ObjectManager::Branch& branch,
         const std::string& relation_name,
@@ -276,7 +303,10 @@ namespace
 
         const std::string new_snapshot_hash = register_snapshot(relations);
         if (new_snapshot_hash.empty()) return {};
+
+        const std::string old_hash = branch.target_hash;
         branch.target_hash = new_snapshot_hash;
+        rebind_snapshot_pin(old_hash, new_snapshot_hash);
         return new_snapshot_hash;
     }
 
@@ -373,7 +403,8 @@ int rnt_init(const char* driver, const char* storage_path)
         rt->handler = std::make_unique<nt::HandlerManager>(
             rt->objects, rt->permissions, rt->identities, rt->lifecycles,
             *rt->references);
-        rt->cursors = std::make_unique<nt::CursorManager>(*rt->storage);
+        rt->cursors = std::make_unique<nt::CursorManager>(
+            *rt->storage, &rt->lifecycles, &rt->objects);
         g_rt = std::move(rt);
 
         // Register the default branch on first boot so that
@@ -432,6 +463,18 @@ int rnt_session_close(const char* session_hash)
     if (!is_initialized() || !session_hash) return -1;
     const auto session_path = split_path(
         ("/system/sessions/" + std::string(session_hash)).c_str());
+
+    auto* entry = g_rt->objects.Find(session_path);
+    if (!entry || !entry->object) return -1;
+    auto* session = dynamic_cast<nt::ObjectManager::Session*>(entry->object.get());
+    if (!session) return -1;
+
+    // Release every snapshot pin this session was holding before the entry
+    // disappears, so dependent snapshots become GC-eligible.
+    for (const auto& [name, hash] : session->branch_overrides)
+        rebind_snapshot_pin(hash, "");
+    session->branch_overrides.clear();
+
     return g_rt->objects.Unregister(session_path) ? 0 : -1;
 }
 
@@ -452,9 +495,14 @@ int rnt_session_set_branch(const char* session_hash,
     if (!session) return -1;
 
     const std::string hash(target_hash);
+    std::string old_hash;
+    auto it = session->branch_overrides.find(branch_name);
+    if (it != session->branch_overrides.end()) old_hash = it->second;
+
     if (hash.empty())
     {
         session->branch_overrides.erase(branch_name);
+        rebind_snapshot_pin(old_hash, "");
         return 0;
     }
 
@@ -462,6 +510,7 @@ int rnt_session_set_branch(const char* session_hash,
     if (g_rt->objects.Find(snap_path) == nullptr) return -1;
 
     session->branch_overrides[branch_name] = hash;
+    rebind_snapshot_pin(old_hash, hash);
     return 0;
 }
 
@@ -511,7 +560,9 @@ int rnt_branch_advance(const char* branch_path, const char* new_hash)
         if (g_rt->objects.Find(snap_path) == nullptr) return -1;
     }
 
+    const std::string old_hash = branch->target_hash;
     branch->target_hash = hash;
+    rebind_snapshot_pin(old_hash, hash);
     return 0;
 }
 
@@ -557,6 +608,7 @@ int rnt_register_branch(const char* path, const char* target_hash)
     branch->target_hash = hash;
 
     g_rt->objects.Register(parts, std::move(branch), make_branch_type());
+    rebind_snapshot_pin("", hash);
     return 0;
 }
 

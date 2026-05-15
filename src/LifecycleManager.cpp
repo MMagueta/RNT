@@ -1,11 +1,46 @@
 #include "LifecycleManager.h"
 
+#include "Types.h"
+
+#include <vector>
+
 namespace nt
 {
+    LifecycleManager::LifecycleManager(ObjectManager& objects)
+        : objects_(objects)
+    {}
+
     void LifecycleManager::Monitor(ObjectManager::registry* object)
     {
         if (object != nullptr)
             ++object->head->handle_count;
+    }
+
+    void LifecycleManager::Unmonitor(ObjectManager::registry* object)
+    {
+        if (object == nullptr || object->head->handle_count == 0) return;
+        --object->head->handle_count;
+        TryCollect(object);
+    }
+
+    void LifecycleManager::Pin(ObjectManager::registry* object)
+    {
+        if (object != nullptr)
+            ++object->head->reference_count;
+    }
+
+    void LifecycleManager::Unpin(ObjectManager::registry* object)
+    {
+        if (object == nullptr || object->head->reference_count == 0) return;
+        --object->head->reference_count;
+        TryCollect(object);
+    }
+
+    bool LifecycleManager::IsEligibleForGC(ObjectManager::registry* object) const
+    {
+        if (object == nullptr || object->head == nullptr) return false;
+        return object->head->handle_count == 0
+            && object->head->reference_count == 0;
     }
 
     const bool LifecycleManager::Contention(ObjectManager::registry* object)
@@ -13,9 +48,42 @@ namespace nt
         return object != nullptr;
     }
 
-    void LifecycleManager::Unmonitor(ObjectManager::registry* object)
+    void LifecycleManager::TryCollect(ObjectManager::registry* object)
     {
-        if (object != nullptr && object->head->handle_count > 0)
-            --object->head->handle_count;
+        if (!IsEligibleForGC(object)) return;
+
+        // Type-specific cascade before the entry leaves the registry.
+        if (object->head->type && object->head->type->label == MULTIGROUP)
+            CascadeMultigroup(object);
+
+        // Splice the entry out — destroys the IObject and registry_head.
+        objects_.Unregister(object->head->path);
+    }
+
+    void LifecycleManager::CascadeMultigroup(ObjectManager::registry* multigroup)
+    {
+        if (multigroup == nullptr || multigroup->head == nullptr) return;
+        const auto& mg_path = multigroup->head->path;
+        if (mg_path.size() < 3) return;
+
+        // Collect first, mutate after — Unpin can Unregister the entry we're
+        // standing on if its counters were already zero, and iteration must
+        // outlive that mutation.
+        std::vector<ObjectManager::registry*> children;
+        for (auto* cur = objects_.entries.get(); cur != nullptr; cur = cur->next.get())
+        {
+            const auto& p = cur->head->path;
+            if (p.size() <= mg_path.size() + 1) continue;
+
+            bool prefix_match = true;
+            for (size_t i = 0; i < mg_path.size(); ++i)
+                if (p[i] != mg_path[i]) { prefix_match = false; break; }
+            if (!prefix_match) continue;
+            if (p[mg_path.size()] != "relations") continue;
+
+            children.push_back(cur);
+        }
+
+        for (auto* child : children) Unpin(child);
     }
 }

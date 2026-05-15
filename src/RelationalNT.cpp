@@ -63,7 +63,7 @@ int main()
     // --- Open a handle on villager through the full manager pipeline ---
     nt::PermissionsManager permissions;
     nt::IdentityManager identities;
-    nt::LifecycleManager lifecycles;
+    nt::LifecycleManager lifecycles(objects);
     nt::NamespaceReferenceManager references(objects);
     nt::HandlerManager handler(objects, permissions, identities, lifecycles, references);
 

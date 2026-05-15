@@ -75,10 +75,10 @@ struct Fixture
     nt::ObjectManager    objects;
     nt::PermissionsManager permissions;
     nt::IdentityManager  identities;
-    nt::LifecycleManager lifecycles;
+    nt::LifecycleManager lifecycles { objects };
     nt::NamespaceReferenceManager references { objects };
     nt::HandlerManager   handler { objects, permissions, identities, lifecycles, references };
-    nt::CursorManager    cursors { backend };
+    nt::CursorManager    cursors { backend, &lifecycles, &objects };
     int conn = 1;
 };
 

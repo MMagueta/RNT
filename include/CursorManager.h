@@ -3,6 +3,8 @@
 #include "Api.h"
 #include "HandlerManager.h"
 #include "IStorageBackend.h"
+#include "LifecycleManager.h"
+#include "ObjectManager.h"
 #include "Types.h"
 
 #include <cstddef>
@@ -37,8 +39,19 @@ namespace nt
     public:
         static constexpr std::size_t PAGE_SIZE = 1;
 
-        /** @brief Constructs a CursorManager that reads from the given backend. */
-        explicit CursorManager(IStorageBackend& backend);
+        /**
+         * @brief Constructs a CursorManager.
+         *
+         * The @p lifecycles and @p objects references are optional: when
+         * left null the cursor performs no snapshot pinning (this matches the
+         * test fixtures, which register relations at synthetic paths with no
+         * /system/snapshots ancestor). When both are provided, Open finds the
+         * resolved snapshot for the handle's relation and Pins it for the
+         * cursor's lifetime, releasing the pin in Close.
+         */
+        explicit CursorManager(IStorageBackend& backend,
+                               LifecycleManager* lifecycles = nullptr,
+                               ObjectManager* objects = nullptr);
 
         /**
          * @brief Active scan state for a single relation.
@@ -53,9 +66,15 @@ namespace nt
          * merkle_root is seeded from ObjectManager::Relation::merkle_root at
          * open time and does not change during iteration; the cursor reads the
          * snapshot captured when it was opened.
+         *
+         * Notably the cursor does NOT keep a pointer to the HandlerManager
+         * handle it was opened from. Everything Next() needs — the relation
+         * type, the merkle_root, and the ephemeral generator function — is
+         * captured at Open time, so closing the handle before the cursor is
+         * exhausted is safe (the API contract still says to close the cursor
+         * first, but a violation no longer dereferences a freed handle).
          */
         struct cursor {
-            HandlerManager::handle* handle = nullptr;
             /**
              * Hex hash of the relation's Merkle B-tree root node.
              * Empty string means the relation contains no tuples.
@@ -71,6 +90,26 @@ namespace nt
             std::size_t page_position = 0;
             std::size_t fetch_offset  = 0;   // next Merkle::Page() call starts here
             bool exhausted = false;
+            /**
+             * True for EPHEMERAL_RELATION cursors; selects the generator-driven
+             * page fetch path instead of Merkle B-tree paging.
+             */
+            bool is_ephemeral = false;
+            /**
+             * Generator function for ephemeral cursors. Copied from the
+             * ephemeral_object_type at Open time, so the cursor remains valid
+             * even if the source registry entry is later torn down (the
+             * snapshot pin held in pinned_snapshot prevents that today, but
+             * the copy makes the cursor independent regardless).
+             */
+            ObjectManager::ephemeral_object_type::Generator generator;
+            /**
+             * Borrowed pointer to the snapshot the cursor is pinning.
+             * Non-null only when a /system/snapshots/<H>/relations/<n>
+             * ancestor was found at Open time and LifecycleManager was
+             * available. Close unpins it.
+             */
+            ObjectManager::registry* pinned_snapshot = nullptr;
         };
 
         /**
@@ -103,7 +142,9 @@ namespace nt
         void Close(cursor* cursor);
 
     private:
-        IStorageBackend& backend_;
+        IStorageBackend&  backend_;
+        LifecycleManager* lifecycles_ = nullptr;
+        ObjectManager*    objects_    = nullptr;
 
         /**
          * Fetches a page of hashes via Merkle::Page, resolves each from the
