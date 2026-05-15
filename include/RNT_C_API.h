@@ -107,41 +107,40 @@ rnt_handle_t rnt_open_handle(const char* path, const char* claims);
 int rnt_close_handle(rnt_handle_t handle);
 
 /**
- * @brief Reads the raw payload bytes stored in a BRANCH object.
+ * @brief Reads the current target snapshot hash from a BRANCH object.
  *
- * Only valid for handles opened on BRANCH objects. The caller uses the bytes
- * to reconstruct the in-memory multigroup (e.g. via Sakura's deserializer).
+ * Only valid for handles opened on BRANCH objects. The returned string is
+ * the merkle_root of the snapshot this branch currently points at — i.e.
+ * the value V such that /system/snapshots/V is the snapshot tip. An empty
+ * string indicates an unborn branch with no commits yet.
  *
- * @param handle       Handle to a BRANCH object.
- * @param payload_out  Set to a heap-allocated copy of the payload bytes.
- *                     Release with rnt_free_bytes().
- * @param len_out      Set to the number of bytes in payload_out.
+ * @param handle           Handle to a BRANCH object.
+ * @param target_hash_out  Set to a heap-allocated copy of the target hash
+ *                         (possibly empty). Release with rnt_free_string().
  * @return 0 on success, negative when the handle is not a BRANCH.
  */
-int rnt_branch_payload(rnt_handle_t handle,
-                       uint8_t**   payload_out,
-                       size_t*     len_out);
+int rnt_branch_target(rnt_handle_t handle, char** target_hash_out);
 
 /**
- * @brief Writes new payload bytes into the BRANCH object referenced by handle.
+ * @brief Atomically advances a branch HEAD to point at a new snapshot.
  *
- * Updates the in-memory branch object. Callers are responsible for persisting
- * the multigroup state to the storage backend separately via tuple link
- * operations.
+ * The new hash must already correspond to a registered snapshot at
+ * /system/snapshots/<new_hash> — branches cannot point at unknown commits.
+ * Pass an empty string to reset the branch to unborn.
  *
  * Write exclusion is structural: BRANCH objects carry @c exclusive=true in
  * their object_type, so LifecycleManager::Contention prevents a second handle
  * from being opened while a writer holds the branch. AUTH_CLAIM::WRITE is not
  * checked at the C API boundary.
  *
- * @param handle   Open BRANCH handle.
- * @param payload  New serialized multigroup bytes.
- * @param len      Number of bytes in payload.
- * @return 0 on success, negative on error.
+ * @param branch_path  Slash-separated branch path, e.g. "/system/branches/main".
+ * @param new_hash     Snapshot hash to advance to (64-char lowercase hex), or
+ *                     "" to reset to unborn.
+ * @return 0 on success, negative when the branch is not found, the type is
+ *         not BRANCH, or @p new_hash is non-empty but no matching snapshot
+ *         is registered.
  */
-int rnt_branch_set_payload(rnt_handle_t handle,
-                           const uint8_t* payload,
-                           size_t         len);
+int rnt_branch_advance(const char* branch_path, const char* new_hash);
 
 /* ------------------------------------------------------------------ */
 /* Object registration                                                  */
@@ -159,18 +158,19 @@ int rnt_branch_set_payload(rnt_handle_t handle,
 int rnt_register_relation(const char* path);
 
 /**
- * @brief Registers a BRANCH object at the given path with an initial payload.
+ * @brief Registers a BRANCH object at the given path pointing at a snapshot.
  *
  * If a BRANCH already exists at this path, returns 0 without modifying it.
+ * When @p target_hash is non-NULL and non-empty it must correspond to a
+ * snapshot already registered at /system/snapshots/<target_hash>; otherwise
+ * the call fails. Pass NULL or "" to register an unborn branch.
  *
- * @param path        Slash-separated path, e.g. "/system/branches/main".
- * @param payload     Initial serialized multigroup bytes (may be NULL for empty).
- * @param payload_len Byte count of payload.
+ * @param path         Slash-separated path, e.g. "/system/branches/main".
+ * @param target_hash  Snapshot hash this branch points at (may be NULL or
+ *                     "" for unborn).
  * @return 0 on success, negative on error.
  */
-int rnt_register_branch(const char* path,
-                        const uint8_t* payload,
-                        size_t         payload_len);
+int rnt_register_branch(const char* path, const char* target_hash);
 
 /* ------------------------------------------------------------------ */
 /* Tuple storage                                                        */

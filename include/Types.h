@@ -45,14 +45,15 @@ enum OBJECT_TYPE {
      */
     EPHEMERAL_RELATION,
     /**
-     * A named mutable reference to a multigroup state, analogous to a git
-     * branch. A BRANCH object carries an opaque payload (serialized multigroup
-     * bytes) that the caller — in practice Sakura — deserializes on open.
+     * A named mutable reference to a multigroup snapshot, analogous to a git
+     * branch. A BRANCH object carries a `target_hash` — the merkle_root of
+     * the snapshot it currently points at — and nothing else.
      *
      * Branch objects are the entry point for database connections: a client
-     * opens a handle to /system/branches/<name>, reads the payload bytes to
-     * reconstruct the multigroup in memory, and holds the handle for the
-     * duration of the session.
+     * opens a handle to /system/branches/<name>, reads target_hash, and uses
+     * that hash to open the snapshot at /system/snapshots/<hash>. Multigroup
+     * state is reconstructed by walking the content-addressed graph from
+     * that snapshot, not by deserializing bytes attached to the branch.
      *
      * The `exclusive` flag on the object_type should be set to true so that
      * LifecycleManager::Contention serializes concurrent writers.

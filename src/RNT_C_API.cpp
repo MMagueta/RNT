@@ -281,9 +281,9 @@ int rnt_close_handle(rnt_handle_t handle)
     return g_rt->handler->Close(h) ? 0 : -1;
 }
 
-int rnt_branch_payload(rnt_handle_t handle, uint8_t** payload_out, size_t* len_out)
+int rnt_branch_target(rnt_handle_t handle, char** target_hash_out)
 {
-    if (!is_initialized() || !handle || !payload_out || !len_out) return -1;
+    if (!is_initialized() || !handle || !target_hash_out) return -1;
 
     auto* h = static_cast<nt::HandlerManager::handle*>(handle);
     if (!h->object || !h->object->head) return -1;
@@ -292,26 +292,29 @@ int rnt_branch_payload(rnt_handle_t handle, uint8_t** payload_out, size_t* len_o
     auto* branch = dynamic_cast<nt::ObjectManager::Branch*>(h->object->object.get());
     if (!branch) return -1;
 
-    const auto& src = branch->payload;
-    auto* buf = new uint8_t[src.size()];
-    std::memcpy(buf, src.data(), src.size());
-    *payload_out = buf;
-    *len_out     = src.size();
+    *target_hash_out = heap_str(branch->target_hash);
     return 0;
 }
 
-int rnt_branch_set_payload(rnt_handle_t handle, const uint8_t* payload, size_t len)
+int rnt_branch_advance(const char* branch_path, const char* new_hash)
 {
-    if (!is_initialized() || !handle) return -1;
+    if (!is_initialized() || !branch_path || !new_hash) return -1;
 
-    auto* h = static_cast<nt::HandlerManager::handle*>(handle);
-    if (!h->object || !h->object->head) return -1;
-    if (h->object->head->type->label != BRANCH) return -1;
+    auto* entry = g_rt->objects.Find(split_path(branch_path));
+    if (!entry || !entry->object || !entry->head) return -1;
+    if (entry->head->type->label != BRANCH) return -1;
 
-    auto* branch = dynamic_cast<nt::ObjectManager::Branch*>(h->object->object.get());
+    auto* branch = dynamic_cast<nt::ObjectManager::Branch*>(entry->object.get());
     if (!branch) return -1;
 
-    branch->payload.assign(payload, payload + len);
+    const std::string hash(new_hash);
+    if (!hash.empty())
+    {
+        const auto snap_path = split_path(("/system/snapshots/" + hash).c_str());
+        if (g_rt->objects.Find(snap_path) == nullptr) return -1;
+    }
+
+    branch->target_hash = hash;
     return 0;
 }
 
@@ -327,16 +330,22 @@ int rnt_register_relation(const char* path)
     return 0;
 }
 
-int rnt_register_branch(const char* path, const uint8_t* payload, size_t payload_len)
+int rnt_register_branch(const char* path, const char* target_hash)
 {
     if (!is_initialized() || !path) return -1;
     const auto parts = split_path(path);
     if (g_rt->objects.Find(parts) != nullptr) return 0;
 
-    auto branch  = std::make_unique<nt::ObjectManager::Branch>();
-    branch->name = parts.empty() ? "" : parts.back();
-    if (payload && payload_len > 0)
-        branch->payload.assign(payload, payload + payload_len);
+    const std::string hash = target_hash ? target_hash : "";
+    if (!hash.empty())
+    {
+        const auto snap_path = split_path(("/system/snapshots/" + hash).c_str());
+        if (g_rt->objects.Find(snap_path) == nullptr) return -1;
+    }
+
+    auto branch         = std::make_unique<nt::ObjectManager::Branch>();
+    branch->name        = parts.empty() ? "" : parts.back();
+    branch->target_hash = hash;
 
     g_rt->objects.Register(parts, std::move(branch), make_branch_type());
     return 0;

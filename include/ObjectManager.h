@@ -101,17 +101,23 @@ namespace nt
         class Transaction : public IObject {};
 
         /**
-         * @brief A named mutable reference to a multigroup state.
+         * @brief A named mutable reference to a multigroup snapshot.
          *
-         * The payload field carries the serialized multigroup bytes in whatever
-         * format the caller registered them with. The C API returns these bytes
-         * verbatim when a handle to the branch is opened; Sakura is responsible
-         * for deserializing them into a Multigroup object.
+         * `target_hash` is the merkle_root of the Multigroup snapshot this
+         * branch currently points at — i.e. the path-fragment value V such
+         * that /system/snapshots/V is the snapshot tip. Empty string means
+         * the branch has no commits yet (unborn).
+         *
+         * Branches are the sole mutable pointer in the system; concurrent
+         * writers serialize through LifecycleManager::Contention because the
+         * BRANCH object_type carries exclusive=true. Readers never contend —
+         * they resolve the branch to its snapshot and operate on the
+         * immutable Multigroup.
          */
         class Branch : public IObject {
         public:
             std::string name;
-            std::vector<uint8_t> payload;
+            std::string target_hash;
         };
 
         /**
