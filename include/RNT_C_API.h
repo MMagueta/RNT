@@ -225,6 +225,34 @@ int rnt_register_relation(const char* path);
  */
 int rnt_register_branch(const char* path, const char* target_hash);
 
+/**
+ * @brief Lists all relations in a branch's current snapshot.
+ *
+ * Returns a newline-delimited string of "name\troot_hash" pairs, one per
+ * relation in the snapshot. An unborn branch (no commits yet) yields an
+ * empty string. The caller must release the string with rnt_free_string().
+ *
+ * @param branch_path  Slash-separated branch path, e.g. "/system/branches/main".
+ * @param out          Set to a heap-allocated "name\troot\n" string.
+ *                     Release with rnt_free_string(). NULL on error.
+ * @return 0 on success, negative when the branch is not found.
+ */
+int rnt_list_relations(const char* branch_path, char** out);
+
+/**
+ * @brief Lists all relations stored in a specific snapshot.
+ *
+ * Reads the multigroup codec directly from the snapshot at
+ * /system/snapshots/<snapshot_hash> without following any branch HEAD.
+ * Use this when the desired snapshot hash is already known (e.g. detached
+ * checkout). Returns the same "name\troot_hash\n" format as rnt_list_relations.
+ *
+ * @param snapshot_hash  64-char hex hash of the snapshot.
+ * @param out            Set to heap-allocated string. Release with rnt_free_string().
+ * @return 0 on success, negative when the snapshot is not registered.
+ */
+int rnt_list_snapshot_relations(const char* snapshot_hash, char** out);
+
 /* ------------------------------------------------------------------ */
 /* Tuple storage                                                        */
 /* ------------------------------------------------------------------ */

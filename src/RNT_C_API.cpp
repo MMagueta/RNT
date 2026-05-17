@@ -612,6 +612,38 @@ int rnt_register_branch(const char* path, const char* target_hash)
     return 0;
 }
 
+int rnt_list_relations(const char* branch_path, char** out)
+{
+    if (!is_initialized() || !branch_path || !out) return -1;
+    auto* branch = find_branch(split_path(branch_path));
+    if (!branch) return -1;
+    const auto relations = read_branch_relations(*branch);
+    std::string result;
+    for (const auto& [name, root] : relations)
+        result += name + "\t" + root + "\n";
+    *out = heap_str(result);
+    return 0;
+}
+
+int rnt_list_snapshot_relations(const char* snapshot_hash, char** out)
+{
+    if (!is_initialized() || !snapshot_hash || !out) return -1;
+    const std::string hash(snapshot_hash);
+    const auto snap_path = split_path(("/system/snapshots/" + hash).c_str());
+    auto* entry = g_rt->objects.Find(snap_path);
+    if (!entry || !entry->object) return -1;
+    auto* mg = dynamic_cast<nt::ObjectManager::Multigroup*>(entry->object.get());
+    if (!mg) return -1;
+    auto opt = g_rt->storage->Get(mg->merkle_root);
+    if (!opt) { *out = heap_str(""); return 0; }
+    const auto relations = nt::MultigroupCodec::Deserialize(*opt);
+    std::string result;
+    for (const auto& [name, root] : relations)
+        result += name + "\t" + root + "\n";
+    *out = heap_str(result);
+    return 0;
+}
+
 int rnt_link_tuple(const char* relation_path, const char* kv_attrs, char** hash_out)
 {
     if (!is_initialized() || !relation_path || !kv_attrs || !hash_out) return -1;
