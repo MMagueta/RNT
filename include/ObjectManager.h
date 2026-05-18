@@ -5,6 +5,7 @@
 
 #include <cstdint>
 #include <functional>
+#include <map>
 #include <memory>
 #include <set>
 #include <string>
@@ -33,8 +34,27 @@ namespace nt
             virtual ~IObject() = default;
         };
 
-        /** @brief Abstract registry object representing a multigroup. */
-        class Multigroup : public IObject {};
+        /**
+         * @brief Registry object representing a multigroup snapshot.
+         *
+         * `merkle_root` is the hex hash of the Merkle<std::string> root node
+         * that maps relation_name → relation_merkle_root for this snapshot.
+         * Updates are path-localised: inserting one tuple advances the root
+         * through O(log_B) node rewrites, leaving sibling subtrees byte-
+         * identical.
+         *
+         * Every commit produces a new Multigroup entry under
+         * /system/snapshots/<merkle_root> with one child Relation per leaf at
+         * /system/snapshots/<merkle_root>/relations/<relation_name>. Snapshots are
+         * immutable (disposable=false, exclusive=false); the rest of the
+         * system refers to them by hash. A Multigroup is eligible for GC
+         * only when its reference_count drops to zero (no BRANCH_TREE still
+         * pins it, no pinned cursor still references it).
+         */
+        class Multigroup : public IObject {
+        public:
+            std::string merkle_root;
+        };
         /**
          * @brief Registry object representing a stored relation.
          *
@@ -46,21 +66,107 @@ namespace nt
         public:
             std::string merkle_root;
         };
+        /**
+         * @brief Registry object representing an ephemeral relation.
+         *
+         * Ephemeral relations have no tuple storage of their own; tuples are
+         * produced on demand by the generator function declared in the
+         * ephemeral_object_type descriptor. They compose into a multigroup's
+         * tree on equal footing with stored relations — only `merkle_root`
+         * participates in the Merkle<std::string> entry for this relation,
+         * regardless of how that root was derived.
+         *
+         * `merkle_root` is the SHA256 hex digest derived from the generator's
+         * identity, the current schema, and the merkle_roots of the declared
+         * base relations. Any mutation to structure or rebinding of a base
+         * produces a new merkle_root, which then propagates into a new
+         * multigroup snapshot exactly like a tuple insertion in a stored
+         * relation.
+         *
+         * `dependencies` lists the logical paths of base relations this
+         * ephemeral relation is defined atop of. The lifecycle manager Pins
+         * each entry while this object is alive, preventing GC of a stored
+         * relation that still backs an ephemeral one. The dependency list is
+         * also the foundation for attribute-level provenance tracking added
+         * later.
+         *
+         * @todo Define the merkle_root composition function (hashes the
+         *       generator identity + schema + sorted base merkle_roots).
+         *       Until ephemeral relations are registered through a writer
+         *       path this remains a documentation-only contract.
+         */
+        class EphemeralRelation : public IObject {
+        public:
+            std::string              merkle_root;
+            std::vector<std::string> dependencies;
+        };
         /** @brief Abstract registry object representing a transaction. */
         class Transaction : public IObject {};
 
         /**
-         * @brief A named mutable reference to a multigroup state.
+         * @brief Registry object representing an active connection's session.
          *
-         * The payload field carries the serialized multigroup bytes in whatever
-         * format the caller registered them with. The C API returns these bytes
-         * verbatim when a handle to the branch is opened; Sakura is responsible
-         * for deserializing them into a Multigroup object.
+         * `connection_context` carries whatever auth/connection metadata the
+         * caller passed to rnt_session_open. The runtime treats it as an
+         * opaque pointer; ownership of the pointee is the caller's concern.
+         *
+         * `branch_overrides` maps a branch name to the BRANCH_TREE root this
+         * session should see for that branch, instead of the global HEAD.
+         * NamespaceReferenceManager::Resolve consults the override first when
+         * a path of the form /system/sessions/<X>/branches/<name>/<sub>...
+         * is requested, falling back to the global /system/branches/<name>
+         * lookup when no override is present.
+         *
+         * The session→branch reference direction is intentional: global
+         * branches do not track viewing sessions, which keeps the hot path
+         * cheap. GC of a stale snapshot must walk all sessions' override
+         * maps to discover live references — amortised cost only paid at GC
+         * time. A reverse index can be added later if session counts make
+         * the walk hot.
+         */
+        class Session : public IObject {
+        public:
+            void* connection_context = nullptr;
+            std::map<std::string, std::string> branch_overrides;
+        };
+
+        /**
+         * @brief A named mutable reference to a branch-tree root.
+         *
+         * `target_hash` is the merkle_root of a BRANCH_TREE — a
+         * `Merkle<std::string>` root mapping `mg_name -> mg_hash`. Path
+         * resolution walks the branch tree to translate
+         * `/system/branches/<n>/multigroups/<mg>/relations/<rel>` into the
+         * right `/system/snapshots/<mg_hash>/relations/<rel>`. Empty string
+         * means the branch has no commits yet (unborn).
+         *
+         * Branches are the sole mutable pointer in the system; concurrent
+         * writers serialize through LifecycleManager::Contention because the
+         * BRANCH object_type carries exclusive=true. Readers never contend —
+         * they resolve the branch through its tree to the immutable
+         * Multigroups and operate on those.
          */
         class Branch : public IObject {
         public:
             std::string name;
-            std::vector<uint8_t> payload;
+            std::string target_hash;
+        };
+
+        /**
+         * @brief Registry object for a branch-tree blob.
+         *
+         * `merkle_root` is the Merkle<std::string> root hash of the (mg_name,
+         * mg_hash) tree this entry indexes. The same blob is referenced by
+         * every BRANCH and session override sharing this tip. Lifecycles:
+         *
+         *   - Pinned once per referencing BRANCH or session override.
+         *   - When its reference count drops to zero,
+         *     LifecycleManager::CascadeBranchTree pages the tree and unpins
+         *     each multigroup it references before unregistering the entry.
+         */
+        class BranchTree : public IObject {
+        public:
+            std::string merkle_root;
         };
 
         /**
@@ -145,8 +251,9 @@ namespace nt
          *
          * - `handle_count` — open sessions holding a cursor or handle on this object.
          *   Managed exclusively by LifecycleManager::Monitor / Unmonitor.
-         * - `reference_count` — structural dependencies such as a view referencing its
-         *   base relations, or a cursor pinned to an immutable snapshot version.
+         * - `reference_count` — structural dependencies such as an ephemeral relation
+         *   referencing its base relations, or a cursor pinned to an immutable snapshot
+         *   version.
          *   Managed by LifecycleManager::Pin / Unpin (not yet implemented).
          *
          * All snapshot versions are immutable. An insertion or deletion produces a new
@@ -166,8 +273,8 @@ namespace nt
         struct registry_head {
             /**
              * Structural dependency count. Non-zero while another registry object
-             * references this one (e.g. a view depending on a base relation, or a
-             * cursor pinned to a snapshot version).
+             * references this one (e.g. an ephemeral relation depending on a base
+             * relation, or a cursor pinned to a snapshot version).
              * @todo Implement via LifecycleManager::Pin / Unpin.
              */
             uint32_t reference_count = 0;
@@ -216,5 +323,19 @@ namespace nt
          * @return Borrowed pointer to the matching entry, or nullptr when not found.
          */
         registry* Find(const std::vector<std::string> object_path);
+
+        /**
+         * @brief Removes the entry registered at @p object_path, if any.
+         *
+         * Splices the matching node out of the registry list and frees its
+         * owned object and head. No reference-count checks are performed —
+         * the caller is responsible for releasing handles and pins before
+         * calling this. Intended for disposable objects (sessions today,
+         * other disposables once GC lands in step 6).
+         *
+         * @param object_path Logical path of the entry to remove.
+         * @return True when an entry was removed, false when nothing matched.
+         */
+        bool Unregister(const std::vector<std::string>& object_path);
     };
 }

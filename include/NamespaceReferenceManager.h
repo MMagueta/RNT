@@ -1,6 +1,11 @@
 #pragma once
 
 #include "Api.h"
+#include "IStorageBackend.h"
+#include "ObjectManager.h"
+
+#include <string>
+#include <vector>
 
 /**
  * @file NamespaceReferenceManager.h
@@ -16,8 +21,9 @@ namespace nt
      * This manager is the reparse layer of the namespace. Its design mirrors the
      * ReactOS ParseProcedure / STATUS_REPARSE mechanism: a namespace entry whose
      * type carries a ParseProcedure can redirect name resolution to a different
-     * path, allowing branch references and views to appear as first-class objects
-     * in the namespace without exposing their physical storage paths directly.
+     * path, allowing branch references and ephemeral relations to appear as
+     * first-class objects in the namespace without exposing their physical
+     * storage paths directly.
      *
      * **Branch references.**
      * A path such as `/refs/branch/main` is a namespace entry backed by a
@@ -27,13 +33,15 @@ namespace nt
      * object itself with WRITE access, which is the sole contention point for that
      * branch.
      *
-     * **View resolution.**
-     * A view is an ephemeral RELATION whose ParseProcedure reparses to its base
-     * relations internally on behalf of the runtime. The caller's handle and access
-     * mask remain bound to the view. The base relations are accessed only via the
-     * view's own type callbacks; the caller never receives a handle on them and
-     * does not need explicit permission on them. Capability security is enforced at
-     * the view boundary, not the base relation boundary.
+     * **Ephemeral relation resolution.**
+     * An ephemeral relation produces tuples through a generator function rather
+     * than physical storage; the generator may query base relations on behalf
+     * of the runtime to materialise its output. The caller's handle and access
+     * mask remain bound to the ephemeral relation. Base relations are accessed
+     * only via the ephemeral relation's own type callbacks; the caller never
+     * receives a handle on them and does not need explicit permission on them.
+     * Capability security is enforced at the ephemeral-relation boundary, not
+     * the base relation boundary.
      *
      * **Atomic multi-reference updates.**
      * Updating multiple references simultaneously (e.g. advancing both `main` and
@@ -43,9 +51,10 @@ namespace nt
      * the batch is aborted. This preserves audit consistency.
      *
      * **Cycle guard.**
-     * View definitions may reference other views, and branch aliases may chain.
-     * Name resolution must track reparse depth and return an error after a bounded
-     * number of iterations to prevent infinite cycles.
+     * Ephemeral relation definitions may reference other ephemeral relations,
+     * and branch aliases may chain. Name resolution must track reparse depth
+     * and return an error after a bounded number of iterations to prevent
+     * infinite cycles.
      *
      * **Audit branch.**
      * Audit requires global access dissociated from any data branch. It should be
@@ -60,5 +69,42 @@ namespace nt
      */
     class NT_API NamespaceReferenceManager
     {
+    public:
+        /**
+         * @brief Constructs a NamespaceReferenceManager bound to a registry.
+         * @param objects Registry used to look up reference objects (branches,
+         *                sessions) during reparse.
+         * @param storage KV backend; required to read the branch-tree merkle
+         *                nodes when resolving `/system/branches/<n>/<mg>/...`
+         *                paths through to their snapshot.
+         */
+        NamespaceReferenceManager(ObjectManager& objects,
+                                  IStorageBackend& storage);
+
+        /**
+         * @brief Rewrites a logical path through reference reparse rules.
+         *
+         * Currently handles branch references:
+         *   /system/branches/<name>/<sub>... → /system/snapshots/<target_hash>/<sub>...
+         * where target_hash is the value stored on the named Branch object. When
+         * the branch is unborn (target_hash empty) or the rest of the path is
+         * empty (caller is opening the branch object itself, not something
+         * under it), the path is returned unchanged.
+         *
+         * Session paths (/system/sessions/<X>/branches/<name>/...) will be
+         * added when SESSION objects exist; for now they are returned as-is.
+         *
+         * A 30-iteration cycle guard mirrors the ReactOS reparse cap. If the
+         * guard trips the returned path is empty, signaling failure to the
+         * caller (Find will subsequently miss).
+         *
+         * @param path Input logical path components.
+         * @return Resolved path components, or empty vector on cycle/failure.
+         */
+        std::vector<std::string> Resolve(std::vector<std::string> path) const;
+
+    private:
+        ObjectManager&   objects_;
+        IStorageBackend& storage_;
     };
 }

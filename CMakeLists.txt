@@ -26,6 +26,7 @@ add_executable (RelationalNT
     "src/CursorManager.cpp"
     "src/Merkle.cpp"
     "src/TupleCodec.cpp"
+    "src/MultigroupCodec.cpp"
     "src/InMemoryBackend.cpp"
     "src/SqliteBackend.cpp"
     "src/NamespaceReferenceManager.cpp"
@@ -53,6 +54,7 @@ set(RNT_CORE_SOURCES
     "src/CursorManager.cpp"
     "src/Merkle.cpp"
     "src/TupleCodec.cpp"
+    "src/MultigroupCodec.cpp"
     "src/InMemoryBackend.cpp"
     "src/NamespaceReferenceManager.cpp"
     "src/VM.cpp"
@@ -60,6 +62,11 @@ set(RNT_CORE_SOURCES
 
 add_executable(RNT_tests
     "test/VM.cpp"
+    "test/MultigroupCodec.cpp"
+    "test/ObjectManager.cpp"
+    "test/NamespaceReferenceManager.cpp"
+    "test/LifecycleManager.cpp"
+    "test/CursorManager.cpp"
     ${RNT_CORE_SOURCES}
 )
 target_include_directories(RNT_tests PRIVATE "include")
@@ -81,3 +88,11 @@ target_include_directories(RNT PRIVATE ${PICOSHA2_INCLUDE_DIRS})
 target_compile_definitions(RNT PRIVATE NT_EXPORTS)
 target_link_libraries(RNT PRIVATE unofficial::sqlite3::sqlite3)
 set_property(TARGET RNT PROPERTY CXX_STANDARD 20)
+
+add_executable(RNT_capi_tests
+    "test/C_API.cpp"
+)
+target_include_directories(RNT_capi_tests PRIVATE "include")
+target_link_libraries(RNT_capi_tests PRIVATE RNT Catch2::Catch2WithMain)
+set_property(TARGET RNT_capi_tests PROPERTY CXX_STANDARD 20)
+catch_discover_tests(RNT_capi_tests DISCOVERY_MODE PRE_TEST)

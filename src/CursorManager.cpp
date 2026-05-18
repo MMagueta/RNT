@@ -5,25 +5,49 @@
 
 namespace nt
 {
-    CursorManager::CursorManager(IStorageBackend& backend)
+    CursorManager::CursorManager(IStorageBackend& backend,
+                                 LifecycleManager* lifecycles,
+                                 ObjectManager* objects)
         : backend_(backend)
+        , lifecycles_(lifecycles)
+        , objects_(objects)
     {}
+
+    // Finds the /system/snapshots/<H> entry that owns a handle's relation, or
+    // nullptr when the relation lives outside the snapshot namespace (tests use
+    // synthetic paths like {"relations", "villager"}).
+    static ObjectManager::registry* find_parent_snapshot(
+        ObjectManager& objects,
+        HandlerManager::handle* handle)
+    {
+        if (handle == nullptr || handle->object == nullptr
+            || handle->object->head == nullptr)
+            return nullptr;
+
+        const auto& p = handle->object->head->path;
+        if (p.size() != 5) return nullptr;
+        if (p[0] != "system" || p[1] != "snapshots" || p[3] != "relations")
+            return nullptr;
+
+        return objects.Find({ p[0], p[1], p[2] });
+    }
 
     void CursorManager::LoadPage(cursor* c)
     {
-        auto hashes = Merkle::Page(backend_, c->merkle_root, c->fetch_offset, PAGE_SIZE);
+        auto entries = Merkle<Hash32>::Page(backend_, c->merkle_root,
+                                             c->fetch_offset, PAGE_SIZE);
         c->page.clear();
         c->page_position = 0;
 
-        for (const auto& hash : hashes)
+        for (const auto& entry : entries)
         {
-            auto bytes = backend_.Get(hash);
+            auto bytes = backend_.Get(bin_to_hex(entry.payload));
             if (!bytes) continue;
             c->page.emplace_back(TupleCodec::Deserialize(*bytes));
         }
 
-        c->fetch_offset += hashes.size();
-        if (hashes.size() < PAGE_SIZE)
+        c->fetch_offset += entries.size();
+        if (entries.size() < PAGE_SIZE)
             c->exhausted = true;
     }
 
@@ -35,13 +59,28 @@ namespace nt
 
         const auto label = handle->object->head->type->label;
 
+        auto pin_snapshot = [&](cursor* c) {
+            if (lifecycles_ == nullptr || objects_ == nullptr) return;
+            auto* snap = find_parent_snapshot(*objects_, handle);
+            if (snap == nullptr) return;
+            lifecycles_->Pin(snap);
+            c->pinned_snapshot = snap;
+        };
+
         if (label == EPHEMERAL_RELATION)
         {
             // Cursor is created exhausted — the JOIN operator writes args and
-            // resets the state before the first probe.
+            // resets the state before the first probe. The generator is copied
+            // off the registry-owned ephemeral_object_type so Next() never has
+            // to dereference the handle again.
+            auto* etype = static_cast<ObjectManager::ephemeral_object_type*>(
+                handle->object->head->type.get());
+
             auto* c = new cursor();
-            c->handle = handle;
-            c->exhausted = true;
+            c->is_ephemeral = true;
+            c->generator    = etype->generator;
+            c->exhausted    = true;
+            pin_snapshot(c);
             return c;
         }
 
@@ -49,8 +88,8 @@ namespace nt
             return nullptr;
 
         auto* c = new cursor();
-        c->handle      = handle;
         c->merkle_root = merkle_root;
+        pin_snapshot(c);
 
         if (merkle_root.empty())
         {
@@ -72,11 +111,9 @@ namespace nt
 
         if (c->exhausted) return nullptr;
 
-        if (c->handle->object->head->type->label == EPHEMERAL_RELATION)
+        if (c->is_ephemeral)
         {
-            auto* etype = static_cast<ObjectManager::ephemeral_object_type*>(
-                c->handle->object->head->type.get());
-            c->page = etype->generator(c->args, c->fetch_offset, PAGE_SIZE);
+            c->page = c->generator(c->args, c->fetch_offset, PAGE_SIZE);
             c->page_position = 0;
             c->fetch_offset += c->page.size();
             if (c->page.size() < PAGE_SIZE)
@@ -92,6 +129,9 @@ namespace nt
 
     void CursorManager::Close(cursor* c)
     {
+        if (c == nullptr) { return; }
+        if (lifecycles_ != nullptr && c->pinned_snapshot != nullptr)
+            lifecycles_->Unpin(c->pinned_snapshot);
         delete c;
     }
 }

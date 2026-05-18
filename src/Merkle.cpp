@@ -3,7 +3,6 @@
 #include <algorithm>
 #include <cassert>
 #include <cstring>
-#include <numeric>
 #include <stdexcept>
 
 namespace nt {
@@ -49,9 +48,9 @@ static uint64_t read_u64(const uint8_t* p)
          | (uint64_t(p[6]) <<  8) |  uint64_t(p[7]);
 }
 
-// ── Hex / binary conversion ──────────────────────────────────────────────────
+// ── Hex / binary conversion (free, key-agnostic) ─────────────────────────────
 
-Merkle::Hash32 Merkle::hex_to_bin(const std::string& hex)
+Hash32 hex_to_bin(const std::string& hex)
 {
     if (hex.size() != 64)
         throw std::invalid_argument(
@@ -70,7 +69,7 @@ Merkle::Hash32 Merkle::hex_to_bin(const std::string& hex)
     return out;
 }
 
-std::string Merkle::bin_to_hex(const Hash32& bin)
+std::string bin_to_hex(const Hash32& bin)
 {
     static const char HEX[] = "0123456789abcdef";
     std::string out(64, '0');
@@ -82,76 +81,136 @@ std::string Merkle::bin_to_hex(const Hash32& bin)
     return out;
 }
 
+// ── Key codec: per-Key serialisation primitives ──────────────────────────────
+
+namespace {
+
+template<typename Key>
+struct KeyCodec; // primary template intentionally undefined
+
+template<>
+struct KeyCodec<Hash32> {
+    static void write(std::vector<uint8_t>& buf, const Hash32& k) {
+        buf.insert(buf.end(), k.begin(), k.end());
+    }
+    // Returns key and advances *p_inout by the number of consumed bytes.
+    static Hash32 read(const uint8_t*& p) {
+        Hash32 k;
+        std::memcpy(k.data(), p, 32);
+        p += 32;
+        return k;
+    }
+    static size_t encoded_size(const Hash32&) { return 32; }
+};
+
+template<>
+struct KeyCodec<std::string> {
+    static void write(std::vector<uint8_t>& buf, const std::string& k) {
+        write_u32(buf, static_cast<uint32_t>(k.size()));
+        buf.insert(buf.end(), k.begin(), k.end());
+    }
+    static std::string read(const uint8_t*& p) {
+        uint32_t len = read_u32(p);
+        p += 4;
+        std::string k(reinterpret_cast<const char*>(p), len);
+        p += len;
+        return k;
+    }
+    static size_t encoded_size(const std::string& k) { return 4 + k.size(); }
+};
+
+} // anonymous namespace
+
 // ── Node serialisation ───────────────────────────────────────────────────────
 
-std::vector<uint8_t> Merkle::encode_leaf(const LeafNode& n)
+template<typename Key>
+std::vector<uint8_t> Merkle<Key>::encode_leaf(const LeafNode& n)
 {
     std::vector<uint8_t> buf;
-    buf.reserve(1 + 4 + n.hashes.size() * 32);
+    size_t payload_size = 0;
+    for (const auto& e : n.entries)
+        payload_size += KeyCodec<Key>::encoded_size(e.key) + 32;
+    buf.reserve(1 + 4 + payload_size);
+
     buf.push_back(TAG_LEAF);
-    write_u32(buf, static_cast<uint32_t>(n.hashes.size()));
-    for (const auto& h : n.hashes)
-        buf.insert(buf.end(), h.begin(), h.end());
+    write_u32(buf, static_cast<uint32_t>(n.entries.size()));
+    for (const auto& e : n.entries)
+    {
+        KeyCodec<Key>::write(buf, e.key);
+        buf.insert(buf.end(), e.payload.begin(), e.payload.end());
+    }
     return buf;
 }
 
-std::vector<uint8_t> Merkle::encode_internal(const InternalNode& n)
+template<typename Key>
+std::vector<uint8_t> Merkle<Key>::encode_internal(const InternalNode& n)
 {
-    // Each entry: 8 (leaf_count) + 32 (min_hash) + 32 (child_hash) = 72 bytes
     std::vector<uint8_t> buf;
-    buf.reserve(1 + 4 + n.entries.size() * 72);
+    size_t payload_size = 0;
+    for (const auto& e : n.entries)
+        payload_size += 8 + KeyCodec<Key>::encoded_size(e.min_key) + 32;
+    buf.reserve(1 + 4 + payload_size);
+
     buf.push_back(TAG_INTERNAL);
     write_u32(buf, static_cast<uint32_t>(n.entries.size()));
     for (const auto& e : n.entries)
     {
         write_u64(buf, e.leaf_count);
-        buf.insert(buf.end(), e.min_hash.begin(), e.min_hash.end());
+        KeyCodec<Key>::write(buf, e.min_key);
         buf.insert(buf.end(), e.child_hash.begin(), e.child_hash.end());
     }
     return buf;
 }
 
-Merkle::LeafNode Merkle::decode_leaf(const std::vector<uint8_t>& bytes)
+template<typename Key>
+typename Merkle<Key>::LeafNode Merkle<Key>::decode_leaf(const std::vector<uint8_t>& bytes)
 {
     uint32_t count = read_u32(bytes.data() + 1);
     LeafNode n;
-    n.hashes.reserve(count);
+    n.entries.reserve(count);
     const uint8_t* p = bytes.data() + 5;
-    for (uint32_t i = 0; i < count; ++i, p += 32)
+    for (uint32_t i = 0; i < count; ++i)
     {
-        Hash32 h;
-        std::memcpy(h.data(), p, 32);
-        n.hashes.push_back(h);
+        LeafEntry e;
+        e.key = KeyCodec<Key>::read(p);
+        std::memcpy(e.payload.data(), p, 32);
+        p += 32;
+        n.entries.push_back(std::move(e));
     }
     return n;
 }
 
-Merkle::InternalNode Merkle::decode_internal(const std::vector<uint8_t>& bytes)
+template<typename Key>
+typename Merkle<Key>::InternalNode Merkle<Key>::decode_internal(const std::vector<uint8_t>& bytes)
 {
     uint32_t count = read_u32(bytes.data() + 1);
     InternalNode n;
     n.entries.reserve(count);
     const uint8_t* p = bytes.data() + 5;
-    for (uint32_t i = 0; i < count; ++i, p += 72)
+    for (uint32_t i = 0; i < count; ++i)
     {
         ChildEntry e;
         e.leaf_count = read_u64(p);
-        std::memcpy(e.min_hash.data(),   p + 8,  32);
-        std::memcpy(e.child_hash.data(), p + 40, 32);
-        n.entries.push_back(e);
+        p += 8;
+        e.min_key = KeyCodec<Key>::read(p);
+        std::memcpy(e.child_hash.data(), p, 32);
+        p += 32;
+        n.entries.push_back(std::move(e));
     }
     return n;
 }
 
-bool Merkle::is_leaf_bytes(const std::vector<uint8_t>& bytes)
+template<typename Key>
+bool Merkle<Key>::is_leaf_bytes(const std::vector<uint8_t>& bytes)
 {
     return !bytes.empty() && bytes[0] == TAG_LEAF;
 }
 
 // ── Storage helpers ──────────────────────────────────────────────────────────
 
-std::vector<uint8_t> Merkle::load_node(IStorageBackend& store,
-                                        const std::string& hash_hex)
+template<typename Key>
+std::vector<uint8_t> Merkle<Key>::load_node(IStorageBackend& store,
+                                            const std::string& hash_hex)
 {
     auto opt = store.Get(hash_hex);
     if (!opt)
@@ -159,46 +218,50 @@ std::vector<uint8_t> Merkle::load_node(IStorageBackend& store,
     return std::move(*opt);
 }
 
-std::string Merkle::store_leaf(IStorageBackend& store, const LeafNode& n)
+template<typename Key>
+std::string Merkle<Key>::store_leaf(IStorageBackend& store, const LeafNode& n)
 {
     return store.Put(encode_leaf(n));
 }
 
-std::string Merkle::store_internal(IStorageBackend& store, const InternalNode& n)
+template<typename Key>
+std::string Merkle<Key>::store_internal(IStorageBackend& store, const InternalNode& n)
 {
     return store.Put(encode_internal(n));
 }
 
-Merkle::Hash32 Merkle::subtree_min(IStorageBackend& store, const std::string& node_hex)
+template<typename Key>
+Key Merkle<Key>::subtree_min_key(IStorageBackend& store, const std::string& node_hex)
 {
     auto bytes = load_node(store, node_hex);
     if (is_leaf_bytes(bytes))
     {
         auto leaf = decode_leaf(bytes);
-        assert(!leaf.hashes.empty() && "Merkle invariant: leaf node must never be empty");
-        return leaf.hashes.front();
+        assert(!leaf.entries.empty() && "Merkle invariant: leaf node must never be empty");
+        return leaf.entries.front().key;
     }
     auto node = decode_internal(bytes);
     assert(!node.entries.empty() && "Merkle invariant: internal node must never be empty");
-    return node.entries.front().min_hash;
+    return node.entries.front().min_key;
 }
 
 // ── Routing helper ───────────────────────────────────────────────────────────
 
-size_t Merkle::route(const InternalNode& node, const Hash32& target)
+template<typename Key>
+size_t Merkle<Key>::route(const InternalNode& node, const Key& target)
 {
     assert(!node.entries.empty() && "Merkle invariant: internal node must never be empty");
     assert(std::is_sorted(node.entries.begin(), node.entries.end(),
                [](const ChildEntry& a, const ChildEntry& b) {
-                   return a.min_hash < b.min_hash;
-               }) && "Merkle invariant: internal node entries must be sorted by min_hash");
+                   return a.min_key < b.min_key;
+               }) && "Merkle invariant: internal node entries must be sorted by min_key");
 
-    // Rightmost child whose min_hash ≤ target.
-    // Defaults to 0 (leftmost) when target < all min_hashes.
+    // Rightmost child whose min_key ≤ target.
+    // Defaults to 0 (leftmost) when target < all min_keys.
     size_t idx = 0;
     for (size_t i = 1; i < node.entries.size(); ++i)
     {
-        if (node.entries[i].min_hash <= target)
+        if (!(target < node.entries[i].min_key))
             idx = i;
         else
             break;
@@ -208,47 +271,48 @@ size_t Merkle::route(const InternalNode& node, const Hash32& target)
 
 // ── Insert ───────────────────────────────────────────────────────────────────
 
-std::string Merkle::Insert(IStorageBackend& store,
-                             const std::string& root_hex,
-                             const std::string& hash_hex)
+template<typename Key>
+std::string Merkle<Key>::Insert(IStorageBackend& store,
+                                 const std::string& root_hex,
+                                 const Key& key,
+                                 const Hash32& payload)
 {
-    const Hash32 tuple_hash = hex_to_bin(hash_hex);
-
     if (root_hex.empty())
     {
         LeafNode leaf;
-        leaf.hashes.push_back(tuple_hash);
+        leaf.entries.push_back({ key, payload });
         return store_leaf(store, leaf);
     }
 
-    auto result = insert_into(store, root_hex, tuple_hash);
+    auto result = insert_into(store, root_hex, key, payload);
     if (!result.did_split)
         return result.new_hash;
 
     // Root split: wrap both halves in a new internal root.
-    Hash32 left_min  = subtree_min(store, result.new_hash);
-    Hash32 right_min = result.split_min_hash;
+    Key left_min  = subtree_min_key(store, result.new_hash);
 
     InternalNode new_root;
 
     ChildEntry left;
     left.leaf_count = result.leaf_count;
-    left.min_hash   = left_min;
+    left.min_key    = left_min;
     left.child_hash = hex_to_bin(result.new_hash);
-    new_root.entries.push_back(left);
+    new_root.entries.push_back(std::move(left));
 
     ChildEntry right;
     right.leaf_count = result.split_leaf_count;
-    right.min_hash   = right_min;
+    right.min_key    = result.split_min_key;
     right.child_hash = hex_to_bin(result.split_hash);
-    new_root.entries.push_back(right);
+    new_root.entries.push_back(std::move(right));
 
     return store_internal(store, new_root);
 }
 
-Merkle::InsertResult Merkle::insert_into(IStorageBackend& store,
-                                           const std::string& node_hex,
-                                           const Hash32& tuple_hash)
+template<typename Key>
+typename Merkle<Key>::InsertResult Merkle<Key>::insert_into(IStorageBackend& store,
+                                                             const std::string& node_hex,
+                                                             const Key& key,
+                                                             const Hash32& payload)
 {
     auto bytes = load_node(store, node_hex);
 
@@ -257,38 +321,51 @@ Merkle::InsertResult Merkle::insert_into(IStorageBackend& store,
     {
         auto leaf = decode_leaf(bytes);
 
-        auto pos = std::lower_bound(leaf.hashes.begin(), leaf.hashes.end(), tuple_hash);
-        if (pos != leaf.hashes.end() && *pos == tuple_hash)
+        auto pos = std::lower_bound(leaf.entries.begin(), leaf.entries.end(), key,
+                                    [](const LeafEntry& e, const Key& k) {
+                                        return e.key < k;
+                                    });
+        if (pos != leaf.entries.end() && !(key < pos->key))
         {
-            // Already present — no-op.
+            // Key already present — update payload if it changed, else no-op.
+            if (pos->payload == payload)
+            {
+                InsertResult r;
+                r.new_hash   = node_hex;
+                r.leaf_count = leaf.entries.size();
+                return r;
+            }
+            pos->payload = payload;
             InsertResult r;
-            r.new_hash   = node_hex;
-            r.leaf_count = leaf.hashes.size();
+            r.new_hash   = store_leaf(store, leaf);
+            r.leaf_count = leaf.entries.size();
             return r;
         }
 
-        leaf.hashes.insert(pos, tuple_hash);
+        leaf.entries.insert(pos, LeafEntry{ key, payload });
 
-        if (leaf.hashes.size() <= B)
+        if (leaf.entries.size() <= B)
         {
             InsertResult r;
             r.new_hash   = store_leaf(store, leaf);
-            r.leaf_count = leaf.hashes.size();
+            r.leaf_count = leaf.entries.size();
             return r;
         }
 
         // Split leaf at midpoint.
-        size_t mid = leaf.hashes.size() / 2;
+        size_t mid = leaf.entries.size() / 2;
         LeafNode left_leaf, right_leaf;
-        left_leaf.hashes  = { leaf.hashes.begin(), leaf.hashes.begin() + static_cast<ptrdiff_t>(mid) };
-        right_leaf.hashes = { leaf.hashes.begin() + static_cast<ptrdiff_t>(mid), leaf.hashes.end() };
+        left_leaf.entries  = { leaf.entries.begin(),
+                               leaf.entries.begin() + static_cast<ptrdiff_t>(mid) };
+        right_leaf.entries = { leaf.entries.begin() + static_cast<ptrdiff_t>(mid),
+                               leaf.entries.end() };
 
         InsertResult r;
         r.new_hash         = store_leaf(store, left_leaf);
-        r.leaf_count       = left_leaf.hashes.size();
+        r.leaf_count       = left_leaf.entries.size();
         r.did_split        = true;
-        r.split_leaf_count = right_leaf.hashes.size();
-        r.split_min_hash   = right_leaf.hashes.front();
+        r.split_leaf_count = right_leaf.entries.size();
+        r.split_min_key    = right_leaf.entries.front().key;
         r.split_hash       = store_leaf(store, right_leaf);
         return r;
     }
@@ -296,19 +373,20 @@ Merkle::InsertResult Merkle::insert_into(IStorageBackend& store,
     // ── Internal node ───────────────────────────────────────────────────────
     auto node = decode_internal(bytes);
 
-    size_t child_idx = route(node, tuple_hash);
+    size_t child_idx = route(node, key);
     auto child_result = insert_into(store,
                                      bin_to_hex(node.entries[child_idx].child_hash),
-                                     tuple_hash);
+                                     key,
+                                     payload);
 
     node.entries[child_idx].leaf_count = child_result.leaf_count;
     node.entries[child_idx].child_hash = hex_to_bin(child_result.new_hash);
 
-    // Update min_hash for the modified child — only child 0 can have its min
-    // decrease (routing guarantees min_hash[i>0] ≤ inserted hash, so inserting
-    // below min_hash[i>0] is impossible).
+    // Update min_key for the modified child — only child 0 can have its min
+    // decrease (routing guarantees min_key[i>0] ≤ inserted key, so inserting
+    // below min_key[i>0] is impossible).
     if (child_idx == 0)
-        node.entries[0].min_hash = subtree_min(store, child_result.new_hash);
+        node.entries[0].min_key = subtree_min_key(store, child_result.new_hash);
 
     uint64_t total = 0;
     for (const auto& e : node.entries) total += e.leaf_count;
@@ -324,9 +402,10 @@ Merkle::InsertResult Merkle::insert_into(IStorageBackend& store,
     // Insert the right sibling immediately after child_idx.
     ChildEntry sibling;
     sibling.leaf_count = child_result.split_leaf_count;
-    sibling.min_hash   = child_result.split_min_hash;
+    sibling.min_key    = child_result.split_min_key;
     sibling.child_hash = hex_to_bin(child_result.split_hash);
-    node.entries.insert(node.entries.begin() + static_cast<ptrdiff_t>(child_idx) + 1, sibling);
+    node.entries.insert(node.entries.begin() + static_cast<ptrdiff_t>(child_idx) + 1,
+                        std::move(sibling));
     total += child_result.split_leaf_count;
 
     if (node.entries.size() <= B)
@@ -340,8 +419,10 @@ Merkle::InsertResult Merkle::insert_into(IStorageBackend& store,
     // Split this internal node.
     size_t mid = node.entries.size() / 2;
     InternalNode left_node, right_node;
-    left_node.entries  = { node.entries.begin(), node.entries.begin() + static_cast<ptrdiff_t>(mid) };
-    right_node.entries = { node.entries.begin() + static_cast<ptrdiff_t>(mid), node.entries.end() };
+    left_node.entries  = { node.entries.begin(),
+                           node.entries.begin() + static_cast<ptrdiff_t>(mid) };
+    right_node.entries = { node.entries.begin() + static_cast<ptrdiff_t>(mid),
+                           node.entries.end() };
 
     uint64_t left_count = 0, right_count = 0;
     for (const auto& e : left_node.entries)  left_count  += e.leaf_count;
@@ -352,20 +433,20 @@ Merkle::InsertResult Merkle::insert_into(IStorageBackend& store,
     r.leaf_count       = left_count;
     r.did_split        = true;
     r.split_leaf_count = right_count;
-    r.split_min_hash   = right_node.entries.front().min_hash;
+    r.split_min_key    = right_node.entries.front().min_key;
     r.split_hash       = store_internal(store, right_node);
     return r;
 }
 
 // ── Remove ───────────────────────────────────────────────────────────────────
 
-std::string Merkle::Remove(IStorageBackend& store,
-                             const std::string& root_hex,
-                             const std::string& hash_hex)
+template<typename Key>
+std::string Merkle<Key>::Remove(IStorageBackend& store,
+                                 const std::string& root_hex,
+                                 const Key& key)
 {
     if (root_hex.empty()) return "";
-    const Hash32 tuple_hash = hex_to_bin(hash_hex);
-    auto result = remove_from(store, root_hex, tuple_hash);
+    auto result = remove_from(store, root_hex, key);
     if (result.new_hash.empty()) return "";
 
     // Collapse: if the root is an internal node with a single child, skip it.
@@ -379,9 +460,10 @@ std::string Merkle::Remove(IStorageBackend& store,
     return result.new_hash;
 }
 
-Merkle::RemoveResult Merkle::remove_from(IStorageBackend& store,
-                                           const std::string& node_hex,
-                                           const Hash32& tuple_hash)
+template<typename Key>
+typename Merkle<Key>::RemoveResult Merkle<Key>::remove_from(IStorageBackend& store,
+                                                             const std::string& node_hex,
+                                                             const Key& key)
 {
     auto bytes = load_node(store, node_hex);
 
@@ -389,23 +471,26 @@ Merkle::RemoveResult Merkle::remove_from(IStorageBackend& store,
     if (is_leaf_bytes(bytes))
     {
         auto leaf = decode_leaf(bytes);
-        auto it = std::lower_bound(leaf.hashes.begin(), leaf.hashes.end(), tuple_hash);
-        if (it == leaf.hashes.end() || *it != tuple_hash)
-            return { node_hex, leaf.hashes.size() };  // not found — no change
+        auto it = std::lower_bound(leaf.entries.begin(), leaf.entries.end(), key,
+                                   [](const LeafEntry& e, const Key& k) {
+                                       return e.key < k;
+                                   });
+        if (it == leaf.entries.end() || key < it->key)
+            return { node_hex, leaf.entries.size() };  // not found — no change
 
-        leaf.hashes.erase(it);
-        if (leaf.hashes.empty())
+        leaf.entries.erase(it);
+        if (leaf.entries.empty())
             return { "", 0 };
-        return { store_leaf(store, leaf), leaf.hashes.size() };
+        return { store_leaf(store, leaf), leaf.entries.size() };
     }
 
     // ── Internal node ───────────────────────────────────────────────────────
     auto node = decode_internal(bytes);
 
-    size_t child_idx = route(node, tuple_hash);
+    size_t child_idx = route(node, key);
     auto child_result = remove_from(store,
                                      bin_to_hex(node.entries[child_idx].child_hash),
-                                     tuple_hash);
+                                     key);
 
     if (child_result.new_hash.empty())
     {
@@ -417,7 +502,7 @@ Merkle::RemoveResult Merkle::remove_from(IStorageBackend& store,
         node.entries[child_idx].leaf_count = child_result.leaf_count;
         node.entries[child_idx].child_hash = hex_to_bin(child_result.new_hash);
         // The min of any child might have changed if we removed its minimum entry.
-        node.entries[child_idx].min_hash   = subtree_min(store, child_result.new_hash);
+        node.entries[child_idx].min_key    = subtree_min_key(store, child_result.new_hash);
     }
 
     uint64_t total = 0;
@@ -425,36 +510,68 @@ Merkle::RemoveResult Merkle::remove_from(IStorageBackend& store,
     return { store_internal(store, node), total };
 }
 
+// ── Get ──────────────────────────────────────────────────────────────────────
+
+template<typename Key>
+std::optional<Hash32> Merkle<Key>::Get(IStorageBackend& store,
+                                        const std::string& root_hex,
+                                        const Key& key)
+{
+    if (root_hex.empty()) return std::nullopt;
+    return get_from(store, root_hex, key);
+}
+
+template<typename Key>
+std::optional<Hash32> Merkle<Key>::get_from(IStorageBackend& store,
+                                             const std::string& node_hex,
+                                             const Key& key)
+{
+    auto bytes = load_node(store, node_hex);
+    if (is_leaf_bytes(bytes))
+    {
+        auto leaf = decode_leaf(bytes);
+        auto it = std::lower_bound(leaf.entries.begin(), leaf.entries.end(), key,
+                                   [](const LeafEntry& e, const Key& k) {
+                                       return e.key < k;
+                                   });
+        if (it == leaf.entries.end() || key < it->key)
+            return std::nullopt;
+        return it->payload;
+    }
+    auto node = decode_internal(bytes);
+    size_t child_idx = route(node, key);
+    return get_from(store, bin_to_hex(node.entries[child_idx].child_hash), key);
+}
+
 // ── Page ─────────────────────────────────────────────────────────────────────
 
-std::vector<std::string> Merkle::Page(IStorageBackend& store,
-                                       const std::string& root_hex,
-                                       size_t offset,
-                                       size_t limit)
+template<typename Key>
+std::vector<typename Merkle<Key>::Entry> Merkle<Key>::Page(IStorageBackend& store,
+                                                            const std::string& root_hex,
+                                                            size_t offset,
+                                                            size_t limit)
 {
     if (root_hex.empty() || limit == 0) return {};
-    std::vector<Hash32> raw;
-    raw.reserve(limit);
+    std::vector<Entry> out;
+    out.reserve(limit);
     size_t skip = offset;
-    page_from(store, root_hex, skip, limit, raw);
-    std::vector<std::string> out;
-    out.reserve(raw.size());
-    for (const auto& h : raw) out.push_back(bin_to_hex(h));
+    page_from(store, root_hex, skip, limit, out);
     return out;
 }
 
-void Merkle::page_from(IStorageBackend& store,
-                        const std::string& node_hex,
-                        size_t& offset,
-                        size_t limit,
-                        std::vector<Hash32>& out)
+template<typename Key>
+void Merkle<Key>::page_from(IStorageBackend& store,
+                             const std::string& node_hex,
+                             size_t& offset,
+                             size_t limit,
+                             std::vector<Entry>& out)
 {
     auto bytes = load_node(store, node_hex);
 
     if (is_leaf_bytes(bytes))
     {
         auto leaf = decode_leaf(bytes);
-        const size_t available = leaf.hashes.size();
+        const size_t available = leaf.entries.size();
 
         if (offset >= available)
         {
@@ -463,7 +580,7 @@ void Merkle::page_from(IStorageBackend& store,
         }
 
         for (size_t i = offset; i < available && out.size() < limit; ++i)
-            out.push_back(leaf.hashes[i]);
+            out.push_back(Entry{ leaf.entries[i].key, leaf.entries[i].payload });
 
         offset = 0;
         return;
@@ -484,5 +601,10 @@ void Merkle::page_from(IStorageBackend& store,
         page_from(store, bin_to_hex(entry.child_hash), offset, limit, out);
     }
 }
+
+// ── Explicit instantiations ──────────────────────────────────────────────────
+
+template class Merkle<Hash32>;
+template class Merkle<std::string>;
 
 } // namespace nt

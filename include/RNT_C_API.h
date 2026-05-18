@@ -46,15 +46,15 @@ typedef void* rnt_handle_t;
 typedef void* rnt_cursor_t;
 
 /* ------------------------------------------------------------------ */
-/* Runtime lifecycle                                                    */
+/* Runtime lifecycle                                                  */
 /* ------------------------------------------------------------------ */
 
 /**
- * @brief Initialises the RNT runtime with the selected storage backend.
+ * @brief Initializes the RNT runtime with the selected storage backend.
  *
  * Must be called before any other API function. Once the runtime is
- * successfully initialised, subsequent calls are no-ops and return 0.
- * If initialisation fails (returns negative), the call may be retried
+ * successfully initialized, subsequent calls are no-ops and return 0.
+ * If initialization fails (returns negative), the call may be retried
  * with corrected parameters — the runtime is left in a clean state.
  *
  * @param driver        Storage driver to use: "sqlite" or "memory".
@@ -83,6 +83,59 @@ int rnt_init(const char* driver, const char* storage_path);
 int rnt_firewall(const char* auth_method, char** claims_out);
 
 /* ------------------------------------------------------------------ */
+/* Session lifecycle                                                    */
+/* ------------------------------------------------------------------ */
+
+/**
+ * @brief Opens a session and registers it at /system/sessions/<hash>.
+ *
+ * The runtime mints a random 256-bit hex hash for the session; the caller
+ * has no influence over the value. The returned string is the opaque
+ * identifier required by every other rnt_session_* call.
+ *
+ * @param connection_context  Caller-owned pointer carried on the session.
+ *                            The runtime treats it as opaque; ownership of
+ *                            the pointee remains with the caller.
+ * @param session_hash_out    Set to a heap-allocated 64-char hex string.
+ *                            Release with rnt_free_string().
+ * @return 0 on success, negative on error.
+ */
+int rnt_session_open(void* connection_context, char** session_hash_out);
+
+/**
+ * @brief Closes a session, unregistering it from /system/sessions/<hash>.
+ *
+ * After this call the session hash is invalid; subsequent rnt_session_* or
+ * resolver lookups against it will fail. Branch overrides held by the
+ * session are dropped.
+ *
+ * @param session_hash  Hash returned by rnt_session_open.
+ * @return 0 on success, negative when the hash does not match an active session.
+ */
+int rnt_session_close(const char* session_hash);
+
+/**
+ * @brief Sets a per-session override for a branch.
+ *
+ * While the override is in effect, paths resolved through
+ * /system/sessions/<hash>/branches/<branch_name>/... point at
+ * /system/snapshots/<target_hash>/... regardless of where the global branch
+ * HEAD currently sits. Pass an empty string for @p target_hash to remove
+ * the override and resume falling back to the global branch.
+ *
+ * Non-empty target hashes must correspond to an existing
+ * /system/snapshots/<target_hash> entry; otherwise the call fails.
+ *
+ * @param session_hash  Session identifier.
+ * @param branch_name   Branch the override applies to (e.g. "main").
+ * @param target_hash   Snapshot hash to bind, or "" to clear.
+ * @return 0 on success, negative on error.
+ */
+int rnt_session_set_branch(const char* session_hash,
+                           const char* branch_name,
+                           const char* target_hash);
+
+/* ------------------------------------------------------------------ */
 /* Handle lifecycle                                                     */
 /* ------------------------------------------------------------------ */
 
@@ -107,41 +160,41 @@ rnt_handle_t rnt_open_handle(const char* path, const char* claims);
 int rnt_close_handle(rnt_handle_t handle);
 
 /**
- * @brief Reads the raw payload bytes stored in a BRANCH object.
+ * @brief Reads the current branch-tree root hash from a BRANCH object.
  *
- * Only valid for handles opened on BRANCH objects. The caller uses the bytes
- * to reconstruct the in-memory multigroup (e.g. via Sakura's deserializer).
+ * Only valid for handles opened on BRANCH objects. The returned string is
+ * the merkle_root of the BRANCH_TREE this branch currently points at — a
+ * `Merkle<std::string>` root mapping mg_name → mg_hash. An empty string
+ * indicates an unborn branch with no commits yet.
  *
- * @param handle       Handle to a BRANCH object.
- * @param payload_out  Set to a heap-allocated copy of the payload bytes.
- *                     Release with rnt_free_bytes().
- * @param len_out      Set to the number of bytes in payload_out.
+ * @param handle           Handle to a BRANCH object.
+ * @param target_hash_out  Set to a heap-allocated copy of the target hash
+ *                         (possibly empty). Release with rnt_free_string().
  * @return 0 on success, negative when the handle is not a BRANCH.
  */
-int rnt_branch_payload(rnt_handle_t handle,
-                       uint8_t**   payload_out,
-                       size_t*     len_out);
+int rnt_branch_target(rnt_handle_t handle, char** target_hash_out);
 
 /**
- * @brief Writes new payload bytes into the BRANCH object referenced by handle.
+ * @brief Atomically advances a branch to point at a new branch-tree root.
  *
- * Updates the in-memory branch object. Callers are responsible for persisting
- * the multigroup state to the storage backend separately via tuple link
- * operations.
+ * The new hash must already exist as a content-addressed blob in the KV
+ * store — branch-tree roots are produced by mutating calls (rnt_link_tuple,
+ * rnt_register_relation, …) and cannot be invented externally. Pass an
+ * empty string to reset the branch to unborn.
  *
  * Write exclusion is structural: BRANCH objects carry @c exclusive=true in
  * their object_type, so LifecycleManager::Contention prevents a second handle
  * from being opened while a writer holds the branch. AUTH_CLAIM::WRITE is not
  * checked at the C API boundary.
  *
- * @param handle   Open BRANCH handle.
- * @param payload  New serialized multigroup bytes.
- * @param len      Number of bytes in payload.
- * @return 0 on success, negative on error.
+ * @param branch_path  Slash-separated branch path, e.g. "/system/branches/main".
+ * @param new_hash     Branch-tree root to advance to (64-char lowercase hex),
+ *                     or "" to reset to unborn.
+ * @return 0 on success, negative when the branch is not found, the type is
+ *         not BRANCH, or @p new_hash is non-empty but no matching blob
+ *         exists in the KV store.
  */
-int rnt_branch_set_payload(rnt_handle_t handle,
-                           const uint8_t* payload,
-                           size_t         len);
+int rnt_branch_advance(const char* branch_path, const char* new_hash);
 
 /* ------------------------------------------------------------------ */
 /* Object registration                                                  */
@@ -153,24 +206,71 @@ int rnt_branch_set_payload(rnt_handle_t handle,
  * Idempotent: if an object already exists at the path, the call succeeds
  * without re-registering.
  *
- * @param path Slash-separated path, e.g. "/system/branches/main/relations/foo".
+ * @param path Slash-separated path of the form
+ *             "/system/branches/<branch>/multigroups/<mg>/relations/<rel>".
  * @return 0 on success, negative on error.
  */
 int rnt_register_relation(const char* path);
 
 /**
- * @brief Registers a BRANCH object at the given path with an initial payload.
+ * @brief Registers a BRANCH object at the given path pointing at a branch-tree root.
  *
  * If a BRANCH already exists at this path, returns 0 without modifying it.
+ * When @p target_hash is non-NULL and non-empty it must already exist as a
+ * content-addressed blob in the KV store (produced by an earlier mutation
+ * through the same runtime); otherwise the call fails. Pass NULL or "" to
+ * register an unborn branch.
  *
- * @param path        Slash-separated path, e.g. "/system/branches/main".
- * @param payload     Initial serialized multigroup bytes (may be NULL for empty).
- * @param payload_len Byte count of payload.
+ * @param path         Slash-separated path, e.g. "/system/branches/main".
+ * @param target_hash  Branch-tree root this branch points at (may be NULL
+ *                     or "" for unborn).
  * @return 0 on success, negative on error.
  */
-int rnt_register_branch(const char* path,
-                        const uint8_t* payload,
-                        size_t         payload_len);
+int rnt_register_branch(const char* path, const char* target_hash);
+
+/**
+ * @brief Lists all relations of a specific multigroup under a branch.
+ *
+ * Returns a newline-delimited string of "name\troot_hash" pairs, one per
+ * relation in the named multigroup at the branch's current tree. An unborn
+ * branch or an mg absent from the branch tree yields an empty string. The
+ * caller must release the string with rnt_free_string().
+ *
+ * @param branch_mg_path  Slash-separated path of the form
+ *                        "/system/branches/<name>/multigroups/<mg>".
+ * @param out             Set to a heap-allocated "name\troot\n" string.
+ *                        Release with rnt_free_string(). NULL on error.
+ * @return 0 on success, negative when the path shape is wrong or the branch
+ *         is not found.
+ */
+int rnt_list_relations(const char* branch_mg_path, char** out);
+
+/**
+ * @brief Lists all multigroups bound to a branch.
+ *
+ * Reads the branch-tree root from `/system/branches/<name>` and pages each
+ * (mg_name, mg_hash) entry. Returns "name\thash\n" lines. Unborn branches
+ * yield an empty string.
+ *
+ * @param branch_path  Slash-separated branch path, e.g. "/system/branches/main".
+ * @param out          Heap-allocated string; release with rnt_free_string().
+ * @return 0 on success, negative when the branch is not found.
+ */
+int rnt_list_branch_multigroups(const char* branch_path, char** out);
+
+/**
+ * @brief Lists all relations stored in a specific snapshot.
+ *
+ * Reads the multigroup codec directly from the snapshot at
+ * /system/snapshots/<snapshot_hash> without following any branch HEAD.
+ * Use this when the desired snapshot hash is already known (e.g. detached
+ * checkout). Returns the same "name\troot_hash\n" format as rnt_list_relations.
+ *
+ * @param snapshot_hash  64-char hex hash of the snapshot.
+ * @param out            Set to heap-allocated string. Release with rnt_free_string().
+ * @return 0 on success, negative when the snapshot is not registered.
+ */
+int rnt_list_snapshot_relations(const char* snapshot_hash, char** out);
 
 /* ------------------------------------------------------------------ */
 /* Tuple storage                                                        */
@@ -235,21 +335,6 @@ int rnt_clear_relation(const char* relation_path);
  */
 int rnt_relation_root(const char* relation_path, char** root_hash_out);
 
-/**
- * @brief Writes a Merkle root hash into a relation's ObjectManager entry.
- *
- * Called by Sakura's open_branch during multigroup reconstruction: after
- * deserializing the branch payload, OCaml calls this function once per
- * relation to restore the persisted Merkle root into the in-memory
- * ObjectManager so that subsequent cursors see the correct tuple set.
- *
- * @param relation_path  Slash-separated relation path.
- * @param root_hash      64-character hex Merkle root, or empty string to mark
- *                       the relation as empty.
- * @return 0 on success, negative when the relation is not found.
- */
-int rnt_set_relation_root(const char* relation_path, const char* root_hash);
-
 /* ------------------------------------------------------------------ */
 /* Cursor and VM                                                        */
 /* ------------------------------------------------------------------ */
@@ -300,7 +385,7 @@ typedef void* rnt_plan_t;
  * plan and released when the resulting VM cursor is closed.
  *
  * @param relation_path  Absolute slash-separated path to the relation, e.g.
- *                       "/system/branches/main/relations/public:users".
+ *  "/system/branches/main/multigroups/warehouse/relations/public:users".
  * @return Plan node, or NULL when the relation does not exist or cannot be opened.
  */
 rnt_plan_t rnt_plan_scan(const char* relation_path);

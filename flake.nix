@@ -106,14 +106,6 @@
       devShells = forAllSystems (system:
         let
           inherit (mkDeps system) pkgs unofficialSqlite3Config picosha2Headers;
-
-          # Wrapper that invokes clangd with the Nix toolchain's compiler paths,
-          # enabling accurate diagnostics in editors that use compile_commands.json.
-          clangdRnt = pkgs.writeShellScriptBin "clangd-rnt" ''
-            exec ${pkgs.clang-tools}/bin/clangd \
-              --query-driver='${pkgs.stdenv.cc}/bin/*,/usr/bin/clang,/usr/bin/clang++' \
-              "$@"
-          '';
         in
         {
           default = pkgs.mkShell {
@@ -123,7 +115,6 @@
               pkgs.cmake
               pkgs.lldb
               pkgs.ninja
-              clangdRnt
               picosha2Headers
               pkgs.sqlite
               unofficialSqlite3Config
