@@ -105,7 +105,7 @@ namespace nt
             ObjectManager::ephemeral_object_type::Generator generator;
             /**
              * Borrowed pointer to the snapshot the cursor is pinning.
-             * Non-null only when a /system/snapshots/<H>/relations/<n>
+             * Non-null only when a /system/snapshots/<H>/<n>
              * ancestor was found at Open time and LifecycleManager was
              * available. Close unpins it.
              */

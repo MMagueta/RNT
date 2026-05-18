@@ -1,5 +1,6 @@
 #include <catch2/catch_test_macros.hpp>
 
+#include "InMemoryBackend.h"
 #include "LifecycleManager.h"
 #include "ObjectManager.h"
 
@@ -29,8 +30,9 @@ namespace
 TEST_CASE("Pin and Unpin adjust reference_count symmetrically",
           "[step6][lifecycle][pin]")
 {
+    nt::InMemoryBackend store;
     nt::ObjectManager   om;
-    nt::LifecycleManager lm(om);
+    nt::LifecycleManager lm(om, store);
     om.Register({"r1"}, std::make_unique<nt::ObjectManager::Relation>(), make_type(RELATION));
     auto* entry = om.Find({"r1"});
     REQUIRE(entry->head->reference_count == 0);
@@ -48,16 +50,18 @@ TEST_CASE("Pin and Unpin adjust reference_count symmetrically",
 
 TEST_CASE("Pin on nullptr is a no-op", "[step6][lifecycle][pin]")
 {
+    nt::InMemoryBackend store;
     nt::ObjectManager   om;
-    nt::LifecycleManager lm(om);
+    nt::LifecycleManager lm(om, store);
     REQUIRE_NOTHROW(lm.Pin(nullptr));
     REQUIRE_NOTHROW(lm.Unpin(nullptr));
 }
 
 TEST_CASE("Unpin below zero does not underflow", "[step6][lifecycle][pin]")
 {
+    nt::InMemoryBackend store;
     nt::ObjectManager   om;
-    nt::LifecycleManager lm(om);
+    nt::LifecycleManager lm(om, store);
     om.Register({"r1"}, std::make_unique<nt::ObjectManager::Relation>(), make_type(RELATION));
     auto* entry = om.Find({"r1"});
 
@@ -67,8 +71,9 @@ TEST_CASE("Unpin below zero does not underflow", "[step6][lifecycle][pin]")
 
 TEST_CASE("GC is gated on both counters reaching zero", "[step6][lifecycle][gc]")
 {
+    nt::InMemoryBackend store;
     nt::ObjectManager   om;
-    nt::LifecycleManager lm(om);
+    nt::LifecycleManager lm(om, store);
     om.Register({"r1"}, std::make_unique<nt::ObjectManager::Relation>(), make_type(RELATION));
     auto* entry = om.Find({"r1"});
 
@@ -90,8 +95,9 @@ TEST_CASE("GC is gated on both counters reaching zero", "[step6][lifecycle][gc]"
 TEST_CASE("Unmonitor that brings both counters to zero collects the entry",
           "[step6][lifecycle][gc]")
 {
+    nt::InMemoryBackend store;
     nt::ObjectManager   om;
-    nt::LifecycleManager lm(om);
+    nt::LifecycleManager lm(om, store);
     om.Register({"r1"}, std::make_unique<nt::ObjectManager::Relation>(), make_type(RELATION));
     auto* entry = om.Find({"r1"});
 
@@ -104,8 +110,9 @@ TEST_CASE("Unmonitor that brings both counters to zero collects the entry",
 TEST_CASE("IsEligibleForGC reflects the joint-zero rule",
           "[step6][lifecycle][gc]")
 {
+    nt::InMemoryBackend store;
     nt::ObjectManager   om;
-    nt::LifecycleManager lm(om);
+    nt::LifecycleManager lm(om, store);
     om.Register({"r1"}, std::make_unique<nt::ObjectManager::Relation>(), make_type(RELATION));
     auto* entry = om.Find({"r1"});
 
@@ -117,8 +124,9 @@ TEST_CASE("IsEligibleForGC reflects the joint-zero rule",
 TEST_CASE("CascadeMultigroup unpins child Relations on snapshot collection",
           "[step6][lifecycle][cascade]")
 {
+    nt::InMemoryBackend store;
     nt::ObjectManager   om;
-    nt::LifecycleManager lm(om);
+    nt::LifecycleManager lm(om, store);
 
     om.Register({"system", "snapshots", "H1"},
                 std::make_unique<nt::ObjectManager::Multigroup>(), make_type(MULTIGROUP));
@@ -148,8 +156,9 @@ TEST_CASE("CascadeMultigroup unpins child Relations on snapshot collection",
 TEST_CASE("Cascade survives a child with an open handle",
           "[step6][lifecycle][cascade]")
 {
+    nt::InMemoryBackend store;
     nt::ObjectManager   om;
-    nt::LifecycleManager lm(om);
+    nt::LifecycleManager lm(om, store);
 
     om.Register({"system", "snapshots", "H2"},
                 std::make_unique<nt::ObjectManager::Multigroup>(), make_type(MULTIGROUP));

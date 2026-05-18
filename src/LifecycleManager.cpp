@@ -1,13 +1,15 @@
 #include "LifecycleManager.h"
 
+#include "Merkle.h"
 #include "Types.h"
 
 #include <vector>
 
 namespace nt
 {
-    LifecycleManager::LifecycleManager(ObjectManager& objects)
-        : objects_(objects)
+    LifecycleManager::LifecycleManager(ObjectManager& objects,
+                                        IStorageBackend& storage)
+        : objects_(objects), storage_(storage)
     {}
 
     void LifecycleManager::Monitor(ObjectManager::registry* object)
@@ -58,13 +60,14 @@ namespace nt
         //             tears them down. Their counters going to zero just means
         //             nobody currently holds them open.
         //   SESSION — rnt_session_close is the sole removal path.
-        // Everything else (MULTIGROUP, RELATION, EPHEMERAL_RELATION,
-        // TRANSACTION) is purely structurally referenced and is GC-eligible
-        // by counters alone.
+        // Everything else (MULTIGROUP, BRANCH_TREE, RELATION,
+        // EPHEMERAL_RELATION, TRANSACTION) is purely structurally referenced
+        // and is GC-eligible by counters alone.
         const auto label = object->head->type->label;
         if (label == BRANCH || label == SESSION) return;
 
-        if (label == MULTIGROUP) CascadeMultigroup(object);
+        if (label == MULTIGROUP)   CascadeMultigroup(object);
+        if (label == BRANCH_TREE)  CascadeBranchTree(object);
 
         objects_.Unregister(object->head->path);
     }
@@ -75,14 +78,15 @@ namespace nt
         const auto& mg_path = multigroup->head->path;
         if (mg_path.size() < 3) return;
 
-        // Collect first, mutate after — Unpin can Unregister the entry we're
-        // standing on if its counters were already zero, and iteration must
-        // outlive that mutation.
+        // /system/snapshots/<hash>/relations/<n> entries are the relation
+        // children pinned by this multigroup. Collect first, mutate after —
+        // Unpin can Unregister the entry we're standing on if its counters
+        // were already zero, and iteration must outlive that mutation.
         std::vector<ObjectManager::registry*> children;
         for (auto* cur = objects_.entries.get(); cur != nullptr; cur = cur->next.get())
         {
             const auto& p = cur->head->path;
-            if (p.size() <= mg_path.size() + 1) continue;
+            if (p.size() != mg_path.size() + 2) continue;
 
             bool prefix_match = true;
             for (size_t i = 0; i < mg_path.size(); ++i)
@@ -94,5 +98,39 @@ namespace nt
         }
 
         for (auto* child : children) Unpin(child);
+    }
+
+    void LifecycleManager::CascadeBranchTree(ObjectManager::registry* branch_tree)
+    {
+        if (branch_tree == nullptr || branch_tree->head == nullptr) return;
+
+        auto* bt = dynamic_cast<ObjectManager::BranchTree*>(branch_tree->object.get());
+        if (bt == nullptr || bt->merkle_root.empty()) return;
+
+        // Page through the (mg_name, mg_hash) tree and collect each referenced
+        // multigroup before unpinning. Decoupling iteration from mutation
+        // keeps us safe against Unpin cascading further GC under our feet.
+        std::vector<ObjectManager::registry*> mgs;
+        constexpr size_t kPageSize = 1024;
+        size_t offset = 0;
+        while (true)
+        {
+            auto page = Merkle<std::string>::Page(storage_, bt->merkle_root,
+                                                   offset, kPageSize);
+            if (page.empty()) break;
+            for (const auto& entry : page)
+            {
+                static const Hash32 zero{};
+                if (entry.payload == zero) continue;
+                const std::string mg_hash = bin_to_hex(entry.payload);
+                auto* mg_entry = objects_.Find(
+                    {"system", "snapshots", mg_hash});
+                if (mg_entry) mgs.push_back(mg_entry);
+            }
+            if (page.size() < kPageSize) break;
+            offset += page.size();
+        }
+
+        for (auto* mg : mgs) Unpin(mg);
     }
 }

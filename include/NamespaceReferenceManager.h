@@ -1,6 +1,7 @@
 #pragma once
 
 #include "Api.h"
+#include "IStorageBackend.h"
 #include "ObjectManager.h"
 
 #include <string>
@@ -73,8 +74,12 @@ namespace nt
          * @brief Constructs a NamespaceReferenceManager bound to a registry.
          * @param objects Registry used to look up reference objects (branches,
          *                sessions) during reparse.
+         * @param storage KV backend; required to read the branch-tree merkle
+         *                nodes when resolving `/system/branches/<n>/<mg>/...`
+         *                paths through to their snapshot.
          */
-        explicit NamespaceReferenceManager(ObjectManager& objects);
+        NamespaceReferenceManager(ObjectManager& objects,
+                                  IStorageBackend& storage);
 
         /**
          * @brief Rewrites a logical path through reference reparse rules.
@@ -99,6 +104,7 @@ namespace nt
         std::vector<std::string> Resolve(std::vector<std::string> path) const;
 
     private:
-        ObjectManager& objects_;
+        ObjectManager&   objects_;
+        IStorageBackend& storage_;
     };
 }

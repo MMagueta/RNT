@@ -1,77 +1,78 @@
 #include "MultigroupCodec.h"
 
-#include <picosha2.h>
-
-#include <algorithm>
-#include <cstdint>
-#include <cstring>
+#include "Merkle.h"
 
 namespace nt::MultigroupCodec
 {
-    static std::vector<RelationEntry> Sorted(std::vector<RelationEntry> entries)
+    // A relation with zero tuples reports an empty merkle_root externally.
+    // The merkle tree's payload type is fixed-width Hash32, so the codec
+    // maps "" ↔ the all-zero hash. The collision probability with a real
+    // SHA256 hitting all-zero (2^-256) is treated as unreachable.
+    static nt::Hash32 encode_payload(const std::string& hex)
     {
-        std::sort(entries.begin(), entries.end(),
-                  [](const RelationEntry& a, const RelationEntry& b) {
-                      return a.first < b.first;
-                  });
-        return entries;
+        if (hex.empty()) return nt::Hash32{};
+        return nt::hex_to_bin(hex);
     }
 
-    std::string Hash(const std::vector<RelationEntry>& relations)
+    static std::string decode_payload(const nt::Hash32& bin)
     {
-        auto bytes = Serialize(relations);
-        return picosha2::hash256_hex_string(bytes.begin(), bytes.end());
+        static const nt::Hash32 zero{};
+        if (bin == zero) return "";
+        return nt::bin_to_hex(bin);
     }
 
-    std::vector<uint8_t> Serialize(const std::vector<RelationEntry>& relations)
+    std::string Build(IStorageBackend& store,
+                      const std::vector<RelationEntry>& relations)
     {
-        std::vector<uint8_t> out;
-        auto write_u32 = [&](uint32_t n) {
-            out.push_back(static_cast<uint8_t>(n));
-            out.push_back(static_cast<uint8_t>(n >> 8));
-            out.push_back(static_cast<uint8_t>(n >> 16));
-            out.push_back(static_cast<uint8_t>(n >> 24));
-        };
+        std::string root;
+        for (const auto& [name, root_hex] : relations)
+            root = nt::Merkle<std::string>::Insert(store, root, name,
+                                                    encode_payload(root_hex));
+        return root;
+    }
 
-        for (const auto& e : Sorted({ relations.begin(), relations.end() }))
+    std::vector<RelationEntry> List(IStorageBackend& store,
+                                     const std::string& root_hex)
+    {
+        std::vector<RelationEntry> out;
+        constexpr size_t kPageSize = 1024;
+        size_t offset = 0;
+        while (true)
         {
-            write_u32(static_cast<uint32_t>(e.first.size()));
-            out.insert(out.end(), e.first.begin(), e.first.end());
-            write_u32(static_cast<uint32_t>(e.second.size()));
-            out.insert(out.end(), e.second.begin(), e.second.end());
+            auto page = nt::Merkle<std::string>::Page(store, root_hex,
+                                                      offset, kPageSize);
+            if (page.empty()) break;
+            for (auto& entry : page)
+                out.emplace_back(std::move(entry.key),
+                                  decode_payload(entry.payload));
+            if (page.size() < kPageSize) break;
+            offset += page.size();
         }
         return out;
     }
 
-    std::vector<RelationEntry> Deserialize(const std::vector<uint8_t>& bytes)
+    std::string InsertOne(IStorageBackend& store,
+                          const std::string& root_hex,
+                          const std::string& relation_name,
+                          const std::string& relation_root_hex)
     {
-        auto read_u32 = [&](size_t pos) -> uint32_t {
-            return static_cast<uint32_t>(bytes[pos])
-                 | (static_cast<uint32_t>(bytes[pos + 1]) << 8)
-                 | (static_cast<uint32_t>(bytes[pos + 2]) << 16)
-                 | (static_cast<uint32_t>(bytes[pos + 3]) << 24);
-        };
-
-        std::vector<RelationEntry> result;
-        size_t pos = 0;
-        while (pos + 8 <= bytes.size())
-        {
-            uint32_t name_len = read_u32(pos); pos += 4;
-            std::string name(reinterpret_cast<const char*>(bytes.data() + pos), name_len);
-            pos += name_len;
-
-            uint32_t root_len = read_u32(pos); pos += 4;
-            std::string root(reinterpret_cast<const char*>(bytes.data() + pos), root_len);
-            pos += root_len;
-
-            result.emplace_back(std::move(name), std::move(root));
-        }
-        return result;
+        return nt::Merkle<std::string>::Insert(store, root_hex, relation_name,
+                                                encode_payload(relation_root_hex));
     }
 
-    std::string Store(IStorageBackend& store,
-                      const std::vector<RelationEntry>& relations)
+    std::string RemoveOne(IStorageBackend& store,
+                          const std::string& root_hex,
+                          const std::string& relation_name)
     {
-        return store.Put(Serialize(relations));
+        return nt::Merkle<std::string>::Remove(store, root_hex, relation_name);
+    }
+
+    std::string Lookup(IStorageBackend& store,
+                       const std::string& root_hex,
+                       const std::string& relation_name)
+    {
+        auto found = nt::Merkle<std::string>::Get(store, root_hex, relation_name);
+        if (!found) return "";
+        return decode_payload(*found);
     }
 }

@@ -73,7 +73,21 @@ enum OBJECT_TYPE {
      * /system/sessions/<hash>/branches/<n> first and falls back to the global
      * /system/branches/<n> when there is no override.
      */
-    SESSION
+    SESSION,
+    /**
+     * The content-addressed Merkle<string> root of a branch's multigroup map.
+     * A BRANCH points at a BRANCH_TREE via target_hash; the tree maps
+     * `mg_name -> mg_hash` and is paged at resolve time to translate
+     * `/system/branches/<n>/<mg>/<rel>` into `/system/snapshots/<mg_hash>/<rel>`.
+     *
+     * BRANCH_TREE objects live at `/system/branch_trees/<hash>`. They are
+     * immutable (disposable=false, exclusive=false) and pinned by the BRANCH
+     * objects that reference them; the mgs they reference are in turn pinned
+     * by the BRANCH_TREE via LifecycleManager::CascadeBranchTree at GC time.
+     * The same blob is reused across all branches and session overrides
+     * that share a tip.
+     */
+    BRANCH_TREE
 };
 
 /** @brief Operations that may be supported by an object type. */

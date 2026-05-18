@@ -1,6 +1,7 @@
 #pragma once
 
 #include "Api.h"
+#include "IStorageBackend.h"
 #include "ObjectManager.h"
 
 /**
@@ -26,14 +27,16 @@ namespace nt
     {
     public:
         /**
-         * @brief Constructs a LifecycleManager bound to a registry.
+         * @brief Constructs a LifecycleManager bound to a registry and store.
          *
          * Needs the registry to perform GC: Unmonitor and Unpin call
          * ObjectManager::Unregister once both counters reach zero. Type-specific
-         * cleanup (e.g. cascading a Multigroup's pin to its child Relations)
-         * runs inside the lifecycle manager before the entry is spliced out.
+         * cleanup (e.g. cascading a Multigroup's pin to its child Relations,
+         * or a BranchTree's pin to its child Multigroups) runs inside the
+         * lifecycle manager before the entry is spliced out. The storage
+         * backend is needed by CascadeBranchTree to page the merkle nodes.
          */
-        explicit LifecycleManager(ObjectManager& objects);
+        LifecycleManager(ObjectManager& objects, IStorageBackend& storage);
 
         /**
          * @brief Starts monitoring an object's lifecycle.
@@ -123,9 +126,10 @@ namespace nt
          *
          * Called by Unmonitor and Unpin after their decrement. No-op when the
          * object is still referenced. When eligible:
-         *   - MULTIGROUP entries first unpin every Relation registered under
-         *     their /system/snapshots/H/relations/ subtree, allowing the
-         *     cascade to continue.
+         *   - MULTIGROUP entries first unpin every Relation registered as a
+         *     direct child of their /system/snapshots/H subtree.
+         *   - BRANCH_TREE entries first unpin every Multigroup their
+         *     content-addressed tree references.
          *   - The entry is then removed from the registry; its IObject and
          *     registry_head are freed.
          *
@@ -137,13 +141,24 @@ namespace nt
         /**
          * @brief Releases pins held by a MULTIGROUP entry on its child Relations.
          *
-         * Iterates the registry once, collects every /system/snapshots/<H>/
-         * relations/<n> entry, and calls Unpin on each. Triggered exclusively
-         * from TryCollect at the moment the parent snapshot becomes eligible
-         * for GC.
+         * Iterates the registry once, collects every /system/snapshots/<H>/<n>
+         * direct child, and calls Unpin on each. Triggered exclusively from
+         * TryCollect at the moment the parent snapshot becomes eligible for GC.
          */
         void CascadeMultigroup(ObjectManager::registry* multigroup);
 
-        ObjectManager& objects_;
+        /**
+         * @brief Releases pins held by a BRANCH_TREE entry on its child mgs.
+         *
+         * Pages the Merkle<std::string> tree at the BranchTree's merkle_root,
+         * resolves each (mg_name, mg_hash) entry to its
+         * /system/snapshots/<mg_hash> Multigroup, and calls Unpin on it.
+         * Triggered exclusively from TryCollect at the moment the BranchTree
+         * itself becomes eligible for GC.
+         */
+        void CascadeBranchTree(ObjectManager::registry* branch_tree);
+
+        ObjectManager&   objects_;
+        IStorageBackend& storage_;
     };
 }

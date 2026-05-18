@@ -3,94 +3,143 @@
 #include "InMemoryBackend.h"
 #include "MultigroupCodec.h"
 
+#include <string>
 #include <vector>
 
 // ---------------------------------------------------------------------------
-// Step 1 — Multigroup snapshots first-class
+// Multigroup snapshot — Merkle<string> tree mapping relation name → relation root.
 //
-// MultigroupCodec is what makes a snapshot identifier well-defined: it
-// hashes the list of (relation_name, relation_merkle_root) pairs after
-// sorting them by name, so two snapshots with the same content collapse
-// to the same hash regardless of insertion order. The same blob is stored
-// in the content-addressed backend, which is what makes "open a snapshot
-// by hash" well-defined even after the in-memory registry forgets it.
+// The codec is a thin facade over Merkle<std::string>; these tests confirm
+// the tree is order-independent (it sorts intrinsically), that mutations are
+// path-localised (sibling entries are untouched), and that snapshots can be
+// re-enumerated from a cold backend by hash alone.
 // ---------------------------------------------------------------------------
 
-TEST_CASE("Hash is order-independent — sort by relation name", "[step1][multigroup-codec]")
+namespace {
+
+// Pad a short label into a deterministic 64-char hex string so the codec can
+// decode it as a 32-byte payload.
+std::string mk_root(char c, char d = '0')
 {
+    std::string h(64, '0');
+    h[0] = c;
+    h[1] = d;
+    return h;
+}
+
+}  // namespace
+
+TEST_CASE("Build is order-independent — tree sorts intrinsically",
+          "[multigroup-codec]")
+{
+    nt::InMemoryBackend a, b;
+
     std::vector<nt::MultigroupCodec::RelationEntry> in_order = {
-        {"alpha",   "AAA"},
-        {"bravo",   "BBB"},
-        {"charlie", "CCC"},
+        {"alpha",   mk_root('a')},
+        {"bravo",   mk_root('b')},
+        {"charlie", mk_root('c')},
     };
     std::vector<nt::MultigroupCodec::RelationEntry> shuffled = {
-        {"charlie", "CCC"},
-        {"alpha",   "AAA"},
-        {"bravo",   "BBB"},
+        {"charlie", mk_root('c')},
+        {"alpha",   mk_root('a')},
+        {"bravo",   mk_root('b')},
     };
-    REQUIRE(nt::MultigroupCodec::Hash(in_order) == nt::MultigroupCodec::Hash(shuffled));
+
+    REQUIRE(nt::MultigroupCodec::Build(a, in_order)
+            == nt::MultigroupCodec::Build(b, shuffled));
 }
 
-TEST_CASE("Hash distinguishes content changes", "[step1][multigroup-codec]")
-{
-    std::vector<nt::MultigroupCodec::RelationEntry> base = {{"foo", "AAA"}};
-
-    std::vector<nt::MultigroupCodec::RelationEntry> different_root = {{"foo", "BBB"}};
-    std::vector<nt::MultigroupCodec::RelationEntry> different_name = {{"bar", "AAA"}};
-    std::vector<nt::MultigroupCodec::RelationEntry> extra_member   = {{"foo", "AAA"}, {"bar", "BBB"}};
-
-    REQUIRE(nt::MultigroupCodec::Hash(base) != nt::MultigroupCodec::Hash(different_root));
-    REQUIRE(nt::MultigroupCodec::Hash(base) != nt::MultigroupCodec::Hash(different_name));
-    REQUIRE(nt::MultigroupCodec::Hash(base) != nt::MultigroupCodec::Hash(extra_member));
-}
-
-TEST_CASE("Serialize/Deserialize round-trip preserves entries in sorted order",
-          "[step1][multigroup-codec]")
-{
-    std::vector<nt::MultigroupCodec::RelationEntry> entries = {
-        {"foo", "0011"},
-        {"bar", "2233"},
-        {"baz", ""},
-    };
-    auto bytes   = nt::MultigroupCodec::Serialize(entries);
-    auto decoded = nt::MultigroupCodec::Deserialize(bytes);
-
-    REQUIRE(decoded.size() == 3);
-    REQUIRE(decoded[0].first  == "bar");
-    REQUIRE(decoded[0].second == "2233");
-    REQUIRE(decoded[1].first  == "baz");
-    REQUIRE(decoded[1].second == "");
-    REQUIRE(decoded[2].first  == "foo");
-    REQUIRE(decoded[2].second == "0011");
-}
-
-TEST_CASE("Store puts the snapshot blob and returns a hash matching Hash()",
-          "[step1][multigroup-codec]")
+TEST_CASE("Build distinguishes content changes", "[multigroup-codec]")
 {
     nt::InMemoryBackend backend;
-    std::vector<nt::MultigroupCodec::RelationEntry> entries = {
-        {"foo", "abc"},
-        {"bar", "def"},
+
+    std::vector<nt::MultigroupCodec::RelationEntry> base = {{"foo", mk_root('a')}};
+    std::vector<nt::MultigroupCodec::RelationEntry> different_root = {{"foo", mk_root('b')}};
+    std::vector<nt::MultigroupCodec::RelationEntry> different_name = {{"bar", mk_root('a')}};
+    std::vector<nt::MultigroupCodec::RelationEntry> extra_member   = {
+        {"foo", mk_root('a')}, {"bar", mk_root('b')}
     };
 
-    const std::string stored   = nt::MultigroupCodec::Store(backend, entries);
-    const std::string computed = nt::MultigroupCodec::Hash(entries);
-    REQUIRE(stored == computed);
-
-    // Cold-load: bytes retrievable by hash, decode back to the same entries.
-    auto bytes = backend.Get(stored);
-    REQUIRE(bytes.has_value());
-    auto decoded = nt::MultigroupCodec::Deserialize(*bytes);
-    REQUIRE(decoded.size() == 2);
-    REQUIRE(decoded[0].first == "bar");
-    REQUIRE(decoded[1].first == "foo");
+    const auto h_base = nt::MultigroupCodec::Build(backend, base);
+    REQUIRE(h_base != nt::MultigroupCodec::Build(backend, different_root));
+    REQUIRE(h_base != nt::MultigroupCodec::Build(backend, different_name));
+    REQUIRE(h_base != nt::MultigroupCodec::Build(backend, extra_member));
 }
 
-TEST_CASE("Empty relation list hashes deterministically", "[step1][multigroup-codec]")
+TEST_CASE("Build then List round-trips entries in key-sorted order",
+          "[multigroup-codec]")
 {
+    nt::InMemoryBackend backend;
+
+    std::vector<nt::MultigroupCodec::RelationEntry> entries = {
+        {"foo", mk_root('a', '1')},
+        {"bar", mk_root('b', '2')},
+        {"baz", mk_root('c', '3')},
+    };
+    const auto root = nt::MultigroupCodec::Build(backend, entries);
+
+    auto listed = nt::MultigroupCodec::List(backend, root);
+    REQUIRE(listed.size() == 3);
+    REQUIRE(listed[0].first == "bar");
+    REQUIRE(listed[1].first == "baz");
+    REQUIRE(listed[2].first == "foo");
+    REQUIRE(listed[0].second == mk_root('b', '2'));
+}
+
+TEST_CASE("Lookup returns payload by name", "[multigroup-codec]")
+{
+    nt::InMemoryBackend backend;
+
+    std::vector<nt::MultigroupCodec::RelationEntry> entries = {
+        {"foo", mk_root('a')},
+        {"bar", mk_root('b')},
+    };
+    const auto root = nt::MultigroupCodec::Build(backend, entries);
+
+    REQUIRE(nt::MultigroupCodec::Lookup(backend, root, "foo") == mk_root('a'));
+    REQUIRE(nt::MultigroupCodec::Lookup(backend, root, "bar") == mk_root('b'));
+    REQUIRE(nt::MultigroupCodec::Lookup(backend, root, "missing").empty());
+}
+
+TEST_CASE("InsertOne mutates one entry; sibling subtree is untouched",
+          "[multigroup-codec]")
+{
+    nt::InMemoryBackend backend;
+
+    std::vector<nt::MultigroupCodec::RelationEntry> entries = {
+        {"foo", mk_root('a')},
+        {"bar", mk_root('b')},
+    };
+    const auto root0 = nt::MultigroupCodec::Build(backend, entries);
+
+    // Mutate foo only; bar's payload must round-trip unchanged.
+    const auto root1 = nt::MultigroupCodec::InsertOne(
+        backend, root0, "foo", mk_root('d'));
+    REQUIRE(root1 != root0);
+    REQUIRE(nt::MultigroupCodec::Lookup(backend, root1, "foo") == mk_root('d'));
+    REQUIRE(nt::MultigroupCodec::Lookup(backend, root1, "bar") == mk_root('b'));
+}
+
+TEST_CASE("RemoveOne deletes one entry; sibling preserved",
+          "[multigroup-codec]")
+{
+    nt::InMemoryBackend backend;
+
+    std::vector<nt::MultigroupCodec::RelationEntry> entries = {
+        {"foo", mk_root('a')},
+        {"bar", mk_root('b')},
+    };
+    const auto root0 = nt::MultigroupCodec::Build(backend, entries);
+
+    const auto root1 = nt::MultigroupCodec::RemoveOne(backend, root0, "foo");
+    REQUIRE(nt::MultigroupCodec::Lookup(backend, root1, "foo").empty());
+    REQUIRE(nt::MultigroupCodec::Lookup(backend, root1, "bar") == mk_root('b'));
+}
+
+TEST_CASE("Empty multigroup builds to an empty root", "[multigroup-codec]")
+{
+    nt::InMemoryBackend backend;
     std::vector<nt::MultigroupCodec::RelationEntry> empty;
-    const std::string h1 = nt::MultigroupCodec::Hash(empty);
-    const std::string h2 = nt::MultigroupCodec::Hash(empty);
-    REQUIRE(h1 == h2);
-    REQUIRE(h1.size() == 64);  // SHA256 hex
+    REQUIRE(nt::MultigroupCodec::Build(backend, empty).empty());
+    REQUIRE(nt::MultigroupCodec::List(backend, "").empty());
 }

@@ -52,8 +52,10 @@ int main()
     auto store = [&](std::vector<nt::Attribute> attrs) {
         auto bytes = nt::TupleCodec::Serialize(attrs);
         auto hash  = backend.Put(std::move(bytes));
+        auto hash_bin = nt::hex_to_bin(hash);
         villager_rel->merkle_root =
-            nt::Merkle::Insert(backend, villager_rel->merkle_root, hash);
+            nt::Merkle<nt::Hash32>::Insert(backend, villager_rel->merkle_root,
+                                            hash_bin, hash_bin);
     };
     store({ { "name", "Blathers" }, { "profession", "Museum Curator" } });
     store({ { "name", "Rover"   }, { "profession", "Traveller" } });
@@ -63,8 +65,8 @@ int main()
     // --- Open a handle on villager through the full manager pipeline ---
     nt::PermissionsManager permissions;
     nt::IdentityManager identities;
-    nt::LifecycleManager lifecycles(objects);
-    nt::NamespaceReferenceManager references(objects);
+    nt::LifecycleManager lifecycles(objects, backend);
+    nt::NamespaceReferenceManager references(objects, backend);
     nt::HandlerManager handler(objects, permissions, identities, lifecycles, references);
 
     int connection = 1;  // dummy connection context

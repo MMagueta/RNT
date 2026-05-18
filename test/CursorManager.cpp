@@ -59,8 +59,8 @@ namespace
         nt::ObjectManager             objects;
         nt::PermissionsManager        permissions;
         nt::IdentityManager           identities;
-        nt::LifecycleManager          lifecycles { objects };
-        nt::NamespaceReferenceManager references  { objects };
+        nt::LifecycleManager          lifecycles { objects, backend };
+        nt::NamespaceReferenceManager references  { objects, backend };
         nt::HandlerManager            handler { objects, permissions, identities,
                                                 lifecycles, references };
         nt::CursorManager             cursors { backend, &lifecycles, &objects };

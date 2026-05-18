@@ -25,7 +25,7 @@ namespace nt
             return nullptr;
 
         const auto& p = handle->object->head->path;
-        if (p.size() < 5) return nullptr;
+        if (p.size() != 5) return nullptr;
         if (p[0] != "system" || p[1] != "snapshots" || p[3] != "relations")
             return nullptr;
 
@@ -34,19 +34,20 @@ namespace nt
 
     void CursorManager::LoadPage(cursor* c)
     {
-        auto hashes = Merkle::Page(backend_, c->merkle_root, c->fetch_offset, PAGE_SIZE);
+        auto entries = Merkle<Hash32>::Page(backend_, c->merkle_root,
+                                             c->fetch_offset, PAGE_SIZE);
         c->page.clear();
         c->page_position = 0;
 
-        for (const auto& hash : hashes)
+        for (const auto& entry : entries)
         {
-            auto bytes = backend_.Get(hash);
+            auto bytes = backend_.Get(bin_to_hex(entry.payload));
             if (!bytes) continue;
             c->page.emplace_back(TupleCodec::Deserialize(*bytes));
         }
 
-        c->fetch_offset += hashes.size();
-        if (hashes.size() < PAGE_SIZE)
+        c->fetch_offset += entries.size();
+        if (entries.size() < PAGE_SIZE)
             c->exhausted = true;
     }
 

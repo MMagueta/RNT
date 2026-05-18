@@ -160,12 +160,12 @@ rnt_handle_t rnt_open_handle(const char* path, const char* claims);
 int rnt_close_handle(rnt_handle_t handle);
 
 /**
- * @brief Reads the current target snapshot hash from a BRANCH object.
+ * @brief Reads the current branch-tree root hash from a BRANCH object.
  *
  * Only valid for handles opened on BRANCH objects. The returned string is
- * the merkle_root of the snapshot this branch currently points at — i.e.
- * the value V such that /system/snapshots/V is the snapshot tip. An empty
- * string indicates an unborn branch with no commits yet.
+ * the merkle_root of the BRANCH_TREE this branch currently points at — a
+ * `Merkle<std::string>` root mapping mg_name → mg_hash. An empty string
+ * indicates an unborn branch with no commits yet.
  *
  * @param handle           Handle to a BRANCH object.
  * @param target_hash_out  Set to a heap-allocated copy of the target hash
@@ -175,11 +175,12 @@ int rnt_close_handle(rnt_handle_t handle);
 int rnt_branch_target(rnt_handle_t handle, char** target_hash_out);
 
 /**
- * @brief Atomically advances a branch HEAD to point at a new snapshot.
+ * @brief Atomically advances a branch to point at a new branch-tree root.
  *
- * The new hash must already correspond to a registered snapshot at
- * /system/snapshots/<new_hash> — branches cannot point at unknown commits.
- * Pass an empty string to reset the branch to unborn.
+ * The new hash must already exist as a content-addressed blob in the KV
+ * store — branch-tree roots are produced by mutating calls (rnt_link_tuple,
+ * rnt_register_relation, …) and cannot be invented externally. Pass an
+ * empty string to reset the branch to unborn.
  *
  * Write exclusion is structural: BRANCH objects carry @c exclusive=true in
  * their object_type, so LifecycleManager::Contention prevents a second handle
@@ -187,11 +188,11 @@ int rnt_branch_target(rnt_handle_t handle, char** target_hash_out);
  * checked at the C API boundary.
  *
  * @param branch_path  Slash-separated branch path, e.g. "/system/branches/main".
- * @param new_hash     Snapshot hash to advance to (64-char lowercase hex), or
- *                     "" to reset to unborn.
+ * @param new_hash     Branch-tree root to advance to (64-char lowercase hex),
+ *                     or "" to reset to unborn.
  * @return 0 on success, negative when the branch is not found, the type is
- *         not BRANCH, or @p new_hash is non-empty but no matching snapshot
- *         is registered.
+ *         not BRANCH, or @p new_hash is non-empty but no matching blob
+ *         exists in the KV store.
  */
 int rnt_branch_advance(const char* branch_path, const char* new_hash);
 
@@ -205,39 +206,57 @@ int rnt_branch_advance(const char* branch_path, const char* new_hash);
  * Idempotent: if an object already exists at the path, the call succeeds
  * without re-registering.
  *
- * @param path Slash-separated path, e.g. "/system/branches/main/relations/foo".
+ * @param path Slash-separated path of the form
+ *             "/system/branches/<branch>/multigroups/<mg>/relations/<rel>".
  * @return 0 on success, negative on error.
  */
 int rnt_register_relation(const char* path);
 
 /**
- * @brief Registers a BRANCH object at the given path pointing at a snapshot.
+ * @brief Registers a BRANCH object at the given path pointing at a branch-tree root.
  *
  * If a BRANCH already exists at this path, returns 0 without modifying it.
- * When @p target_hash is non-NULL and non-empty it must correspond to a
- * snapshot already registered at /system/snapshots/<target_hash>; otherwise
- * the call fails. Pass NULL or "" to register an unborn branch.
+ * When @p target_hash is non-NULL and non-empty it must already exist as a
+ * content-addressed blob in the KV store (produced by an earlier mutation
+ * through the same runtime); otherwise the call fails. Pass NULL or "" to
+ * register an unborn branch.
  *
  * @param path         Slash-separated path, e.g. "/system/branches/main".
- * @param target_hash  Snapshot hash this branch points at (may be NULL or
- *                     "" for unborn).
+ * @param target_hash  Branch-tree root this branch points at (may be NULL
+ *                     or "" for unborn).
  * @return 0 on success, negative on error.
  */
 int rnt_register_branch(const char* path, const char* target_hash);
 
 /**
- * @brief Lists all relations in a branch's current snapshot.
+ * @brief Lists all relations of a specific multigroup under a branch.
  *
  * Returns a newline-delimited string of "name\troot_hash" pairs, one per
- * relation in the snapshot. An unborn branch (no commits yet) yields an
- * empty string. The caller must release the string with rnt_free_string().
+ * relation in the named multigroup at the branch's current tree. An unborn
+ * branch or an mg absent from the branch tree yields an empty string. The
+ * caller must release the string with rnt_free_string().
+ *
+ * @param branch_mg_path  Slash-separated path of the form
+ *                        "/system/branches/<name>/multigroups/<mg>".
+ * @param out             Set to a heap-allocated "name\troot\n" string.
+ *                        Release with rnt_free_string(). NULL on error.
+ * @return 0 on success, negative when the path shape is wrong or the branch
+ *         is not found.
+ */
+int rnt_list_relations(const char* branch_mg_path, char** out);
+
+/**
+ * @brief Lists all multigroups bound to a branch.
+ *
+ * Reads the branch-tree root from `/system/branches/<name>` and pages each
+ * (mg_name, mg_hash) entry. Returns "name\thash\n" lines. Unborn branches
+ * yield an empty string.
  *
  * @param branch_path  Slash-separated branch path, e.g. "/system/branches/main".
- * @param out          Set to a heap-allocated "name\troot\n" string.
- *                     Release with rnt_free_string(). NULL on error.
+ * @param out          Heap-allocated string; release with rnt_free_string().
  * @return 0 on success, negative when the branch is not found.
  */
-int rnt_list_relations(const char* branch_path, char** out);
+int rnt_list_branch_multigroups(const char* branch_path, char** out);
 
 /**
  * @brief Lists all relations stored in a specific snapshot.
@@ -366,7 +385,7 @@ typedef void* rnt_plan_t;
  * plan and released when the resulting VM cursor is closed.
  *
  * @param relation_path  Absolute slash-separated path to the relation, e.g.
- *                       "/system/branches/main/relations/public:users".
+ *  "/system/branches/main/multigroups/warehouse/relations/public:users".
  * @return Plan node, or NULL when the relation does not exist or cannot be opened.
  */
 rnt_plan_t rnt_plan_scan(const char* relation_path);

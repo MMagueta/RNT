@@ -37,17 +37,19 @@ namespace nt
         /**
          * @brief Registry object representing a multigroup snapshot.
          *
-         * merkle_root is the SHA256 hex digest of the serialized child relation
-         * list (name, merkle_root) pairs in sorted order — computed by
-         * MultigroupCodec::Hash and persisted via IStorageBackend::Put when the
-         * snapshot is committed.
+         * `merkle_root` is the hex hash of the Merkle<std::string> root node
+         * that maps relation_name → relation_merkle_root for this snapshot.
+         * Updates are path-localised: inserting one tuple advances the root
+         * through O(log_B) node rewrites, leaving sibling subtrees byte-
+         * identical.
          *
          * Every commit produces a new Multigroup entry under
-         * /system/snapshots/<merkle_root>. Snapshots are immutable
-         * (disposable=false, exclusive=false); the rest of the system refers
-         * to them by hash. A Multigroup is eligible for GC only when its
-         * reference_count drops to zero (no branch HEAD, no session override,
-         * no pinned cursor still references it).
+         * /system/snapshots/<merkle_root> with one child Relation per leaf at
+         * /system/snapshots/<merkle_root>/relations/<relation_name>. Snapshots are
+         * immutable (disposable=false, exclusive=false); the rest of the
+         * system refers to them by hash. A Multigroup is eligible for GC
+         * only when its reference_count drops to zero (no BRANCH_TREE still
+         * pins it, no pinned cursor still references it).
          */
         class Multigroup : public IObject {
         public:
@@ -70,9 +72,9 @@ namespace nt
          * Ephemeral relations have no tuple storage of their own; tuples are
          * produced on demand by the generator function declared in the
          * ephemeral_object_type descriptor. They compose into a multigroup's
-         * hash on equal footing with stored relations — only `merkle_root`
-         * participates in MultigroupCodec::Hash, regardless of how it was
-         * derived.
+         * tree on equal footing with stored relations — only `merkle_root`
+         * participates in the Merkle<std::string> entry for this relation,
+         * regardless of how that root was derived.
          *
          * `merkle_root` is the SHA256 hex digest derived from the generator's
          * identity, the current schema, and the merkle_roots of the declared
@@ -108,7 +110,7 @@ namespace nt
          * caller passed to rnt_session_open. The runtime treats it as an
          * opaque pointer; ownership of the pointee is the caller's concern.
          *
-         * `branch_overrides` maps a branch name to the snapshot hash this
+         * `branch_overrides` maps a branch name to the BRANCH_TREE root this
          * session should see for that branch, instead of the global HEAD.
          * NamespaceReferenceManager::Resolve consults the override first when
          * a path of the form /system/sessions/<X>/branches/<name>/<sub>...
@@ -129,23 +131,42 @@ namespace nt
         };
 
         /**
-         * @brief A named mutable reference to a multigroup snapshot.
+         * @brief A named mutable reference to a branch-tree root.
          *
-         * `target_hash` is the merkle_root of the Multigroup snapshot this
-         * branch currently points at — i.e. the path-fragment value V such
-         * that /system/snapshots/V is the snapshot tip. Empty string means
-         * the branch has no commits yet (unborn).
+         * `target_hash` is the merkle_root of a BRANCH_TREE — a
+         * `Merkle<std::string>` root mapping `mg_name -> mg_hash`. Path
+         * resolution walks the branch tree to translate
+         * `/system/branches/<n>/multigroups/<mg>/relations/<rel>` into the
+         * right `/system/snapshots/<mg_hash>/relations/<rel>`. Empty string
+         * means the branch has no commits yet (unborn).
          *
          * Branches are the sole mutable pointer in the system; concurrent
          * writers serialize through LifecycleManager::Contention because the
          * BRANCH object_type carries exclusive=true. Readers never contend —
-         * they resolve the branch to its snapshot and operate on the
-         * immutable Multigroup.
+         * they resolve the branch through its tree to the immutable
+         * Multigroups and operate on those.
          */
         class Branch : public IObject {
         public:
             std::string name;
             std::string target_hash;
+        };
+
+        /**
+         * @brief Registry object for a branch-tree blob.
+         *
+         * `merkle_root` is the Merkle<std::string> root hash of the (mg_name,
+         * mg_hash) tree this entry indexes. The same blob is referenced by
+         * every BRANCH and session override sharing this tip. Lifecycles:
+         *
+         *   - Pinned once per referencing BRANCH or session override.
+         *   - When its reference count drops to zero,
+         *     LifecycleManager::CascadeBranchTree pages the tree and unpins
+         *     each multigroup it references before unregistering the entry.
+         */
+        class BranchTree : public IObject {
+        public:
+            std::string merkle_root;
         };
 
         /**

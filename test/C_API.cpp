@@ -84,7 +84,7 @@ TEST_CASE("Writing a tuple advances the branch to a new snapshot",
 {
     InitGuard _;
     const char* bpath = "/system/branches/test_step2_advance";
-    const char* rpath = "/system/branches/test_step2_advance/relations/items";
+    const char* rpath = "/system/branches/test_step2_advance/multigroups/public/relations/items";
     REQUIRE(rnt_register_branch(bpath, "") == 0);
     REQUIRE(rnt_register_relation(rpath) == 0);
 
@@ -122,7 +122,7 @@ TEST_CASE("link_tuple commits a new snapshot and relation_root reflects it",
 {
     InitGuard _;
     const char* bpath = "/system/branches/test_step3_link";
-    const char* rpath = "/system/branches/test_step3_link/relations/items";
+    const char* rpath = "/system/branches/test_step3_link/multigroups/public/relations/items";
     REQUIRE(rnt_register_branch(bpath, "") == 0);
     REQUIRE(rnt_register_relation(rpath) == 0);
 
@@ -146,7 +146,7 @@ TEST_CASE("unlink_tuple and clear_relation walk back through new snapshots",
 {
     InitGuard _;
     const char* bpath = "/system/branches/test_step3_unlink";
-    const char* rpath = "/system/branches/test_step3_unlink/relations/items";
+    const char* rpath = "/system/branches/test_step3_unlink/multigroups/public/relations/items";
     REQUIRE(rnt_register_branch(bpath, "") == 0);
     REQUIRE(rnt_register_relation(rpath) == 0);
 
@@ -175,7 +175,7 @@ TEST_CASE("rnt_open_handle resolves branch-relative paths to snapshot relations"
 {
     InitGuard _;
     const char* bpath = "/system/branches/test_step4_resolve";
-    const char* rpath = "/system/branches/test_step4_resolve/relations/items";
+    const char* rpath = "/system/branches/test_step4_resolve/multigroups/public/relations/items";
     REQUIRE(rnt_register_branch(bpath, "") == 0);
     REQUIRE(rnt_register_relation(rpath) == 0);
 
@@ -213,7 +213,7 @@ TEST_CASE("Reading an unborn branch's relation fails cleanly",
     // No relation registered: relation_root miss returns nonzero.
     char* root = nullptr;
     REQUIRE(rnt_relation_root(
-        "/system/branches/test_step4_unborn/relations/missing", &root) != 0);
+        "/system/branches/test_step4_unborn/multigroups/public/relations/missing", &root) != 0);
 }
 
 // ---------------------------------------------------------------------------
@@ -251,7 +251,7 @@ TEST_CASE("Session override redirects branch-relative reads to a different snaps
 {
     InitGuard _;
     const char* bpath = "/system/branches/test_step5_override";
-    const char* rpath = "/system/branches/test_step5_override/relations/items";
+    const char* rpath = "/system/branches/test_step5_override/multigroups/public/relations/items";
     REQUIRE(rnt_register_branch(bpath, "") == 0);
     REQUIRE(rnt_register_relation(rpath) == 0);
 
@@ -285,7 +285,7 @@ TEST_CASE("Session override redirects branch-relative reads to a different snaps
     // Session view: still S1 (one tuple).
     const std::string spath =
         "/system/sessions/" + sid +
-        "/branches/test_step5_override/relations/items";
+        "/branches/test_step5_override/multigroups/public/relations/items";
 
     rnt_handle_t h_session = rnt_open_handle(spath.c_str(), nullptr);
     REQUIRE(h_session != nullptr);
@@ -323,7 +323,7 @@ TEST_CASE("Clearing a session override falls back to the global branch HEAD",
 {
     InitGuard _;
     const char* bpath = "/system/branches/test_step5_clear";
-    const char* rpath = "/system/branches/test_step5_clear/relations/items";
+    const char* rpath = "/system/branches/test_step5_clear/multigroups/public/relations/items";
     REQUIRE(rnt_register_branch(bpath, "") == 0);
     REQUIRE(rnt_register_relation(rpath) == 0);
 
@@ -352,7 +352,7 @@ TEST_CASE("Clearing a session override falls back to the global branch HEAD",
     // Now the session sees the global view (two tuples).
     const std::string spath =
         "/system/sessions/" + sid +
-        "/branches/test_step5_clear/relations/items";
+        "/branches/test_step5_clear/multigroups/public/relations/items";
     rnt_handle_t h = rnt_open_handle(spath.c_str(), nullptr);
     REQUIRE(h != nullptr);
     rnt_cursor_t c = rnt_cursor_open(h);
@@ -381,4 +381,62 @@ TEST_CASE("rnt_session_set_branch rejects an unregistered snapshot",
         "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff") != 0);
 
     REQUIRE(rnt_session_close(sid.c_str()) == 0);
+}
+
+// ---------------------------------------------------------------------------
+// Multi-mg-per-branch — sibling multigroups under one branch evolve
+// independently. Inserting into one mg must not perturb the other's hash
+// or its enumerable relation set.
+// ---------------------------------------------------------------------------
+
+TEST_CASE("Two multigroups under one branch advance independently",
+          "[capi][multi-mg]")
+{
+    InitGuard _;
+    const std::string bpath = "/system/branches/test_multi_mg";
+    REQUIRE(rnt_register_branch(bpath.c_str(), "") == 0);
+
+    // Register one relation in each of two distinct multigroups.
+    REQUIRE(rnt_register_relation(
+        (bpath + "/multigroups/warehouse/relations/orders").c_str()) == 0);
+    REQUIRE(rnt_register_relation(
+        (bpath + "/multigroups/audit/relations/events").c_str()) == 0);
+
+    char* mgs_raw = nullptr;
+    REQUIRE(rnt_list_branch_multigroups(bpath.c_str(), &mgs_raw) == 0);
+    const std::string mgs = take_string(mgs_raw);
+    REQUIRE(mgs.find("warehouse\t") != std::string::npos);
+    REQUIRE(mgs.find("audit\t")     != std::string::npos);
+
+    // Insert into warehouse; record audit's root before/after.
+    char* audit_before = nullptr;
+    REQUIRE(rnt_list_relations(
+        (bpath + "/multigroups/audit").c_str(), &audit_before) == 0);
+    const std::string audit_before_s = take_string(audit_before);
+
+    char* th = nullptr;
+    REQUIRE(rnt_link_tuple((bpath + "/multigroups/warehouse/relations/orders").c_str(),
+                            "id=1\n", &th) == 0);
+    rnt_free_string(th);
+
+    char* audit_after = nullptr;
+    REQUIRE(rnt_list_relations(
+        (bpath + "/multigroups/audit").c_str(), &audit_after) == 0);
+    const std::string audit_after_s = take_string(audit_after);
+
+    // audit's relation set is byte-identical: the warehouse-side mutation
+    // touched only the warehouse subtree at the multigroup level.
+    REQUIRE(audit_before_s == audit_after_s);
+
+    // warehouse/orders is now non-empty.
+    char* root = nullptr;
+    REQUIRE(rnt_relation_root(
+        (bpath + "/multigroups/warehouse/relations/orders").c_str(), &root) == 0);
+    REQUIRE(!take_string(root).empty());
+
+    // audit/events still empty.
+    char* root2 = nullptr;
+    REQUIRE(rnt_relation_root(
+        (bpath + "/multigroups/audit/relations/events").c_str(), &root2) == 0);
+    REQUIRE(take_string(root2).empty());
 }

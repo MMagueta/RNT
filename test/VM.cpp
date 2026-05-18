@@ -33,7 +33,9 @@ static void store_tuple(nt::InMemoryBackend& backend,
     if (!entry) return;
     auto* rel = dynamic_cast<nt::ObjectManager::Relation*>(entry->object.get());
     if (!rel) return;
-    rel->merkle_root = nt::Merkle::Insert(backend, rel->merkle_root, hash);
+    auto hash_bin = nt::hex_to_bin(hash);
+    rel->merkle_root = nt::Merkle<nt::Hash32>::Insert(backend, rel->merkle_root,
+                                                       hash_bin, hash_bin);
 }
 
 static std::unique_ptr<nt::ObjectManager::object_type> make_relation_type()
@@ -75,8 +77,8 @@ struct Fixture
     nt::ObjectManager    objects;
     nt::PermissionsManager permissions;
     nt::IdentityManager  identities;
-    nt::LifecycleManager lifecycles { objects };
-    nt::NamespaceReferenceManager references { objects };
+    nt::LifecycleManager lifecycles { objects, backend };
+    nt::NamespaceReferenceManager references { objects, backend };
     nt::HandlerManager   handler { objects, permissions, identities, lifecycles, references };
     nt::CursorManager    cursors { backend, &lifecycles, &objects };
     int conn = 1;

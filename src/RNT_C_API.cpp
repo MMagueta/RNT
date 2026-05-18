@@ -42,7 +42,7 @@ namespace
         nt::ObjectManager      objects;
         nt::PermissionsManager permissions;
         nt::IdentityManager    identities;
-        nt::LifecycleManager   lifecycles{ objects };
+        std::unique_ptr<nt::LifecycleManager> lifecycles;
         std::unique_ptr<nt::NamespaceReferenceManager> references;
         std::unique_ptr<nt::HandlerManager> handler;
         std::unique_ptr<nt::CursorManager>  cursors;
@@ -137,6 +137,18 @@ namespace
         return t;
     }
 
+    static std::unique_ptr<nt::ObjectManager::object_type> make_branch_tree_type()
+    {
+        auto t      = std::make_unique<nt::ObjectManager::object_type>();
+        t->label    = BRANCH_TREE;
+        t->disposable = false;
+        t->methods  = { OPEN, CLOSE };
+        // Branch-tree blobs are immutable content-addressed merkle roots;
+        // GC is gated by reference_count only.
+        t->exclusive = false;
+        return t;
+    }
+
     static std::unique_ptr<nt::ObjectManager::object_type> make_session_type()
     {
         auto t      = std::make_unique<nt::ObjectManager::object_type>();
@@ -178,20 +190,21 @@ namespace
     }
 
     // Serializes the (name, merkle_root) pairs into the storage backend and
-    // registers the resulting snapshot under /system/snapshots/<hash>, along
-    // with one Relation entry per child at /system/snapshots/<hash>/relations/<n>.
+    // registers the resulting multigroup snapshot under /system/snapshots/<hash>,
+    // with one Relation entry per child at /system/snapshots/<hash>/<name>.
     // Idempotent: if the snapshot already exists in the registry the existing
     // entries are reused. Returns the multigroup hash, or empty string on error.
     //
-    // Each child Relation is Pinned by its parent Multigroup at creation time
-    // (reference_count starts at 1). LifecycleManager::CascadeMultigroup will
-    // release these pins when the Multigroup itself becomes GC-eligible.
+    // Each child Relation is Pinned by its parent Multigroup at creation time.
+    // LifecycleManager::CascadeMultigroup releases these pins when the
+    // multigroup itself becomes GC-eligible.
     static std::string register_snapshot(
         const std::vector<nt::MultigroupCodec::RelationEntry>& relations)
     {
         if (!g_rt) return {};
 
-        const std::string hash = nt::MultigroupCodec::Store(*g_rt->storage, relations);
+        const std::string hash = nt::MultigroupCodec::Build(*g_rt->storage, relations);
+        if (hash.empty()) return {};
         const auto snap_path = split_path(("/system/snapshots/" + hash).c_str());
 
         if (g_rt->objects.Find(snap_path) != nullptr) return hash;
@@ -212,47 +225,103 @@ namespace
 
             // Structural pin from the parent Multigroup; released by
             // LifecycleManager::CascadeMultigroup at GC time.
-            g_rt->lifecycles.Pin(g_rt->objects.Find(rel_path));
+            g_rt->lifecycles->Pin(g_rt->objects.Find(rel_path));
         }
         return hash;
     }
 
-    // Adjusts pins when a branch or session override moves its bound snapshot.
-    // Either side may be the empty string (unbound).
-    static void rebind_snapshot_pin(const std::string& old_hash,
-                                    const std::string& new_hash)
+    // Enumerates (mg_name, mg_hash) pairs in a branch-tree.
+    static std::vector<std::pair<std::string, std::string>>
+    list_branch_tree(const std::string& branch_tree_root)
     {
-        if (old_hash == new_hash) return;
-        if (!new_hash.empty())
+        std::vector<std::pair<std::string, std::string>> out;
+        if (branch_tree_root.empty()) return out;
+        constexpr size_t kPageSize = 1024;
+        size_t offset = 0;
+        while (true)
         {
-            const auto p = split_path(("/system/snapshots/" + new_hash).c_str());
-            g_rt->lifecycles.Pin(g_rt->objects.Find(p));
+            auto page = nt::Merkle<std::string>::Page(*g_rt->storage,
+                                                      branch_tree_root,
+                                                      offset, kPageSize);
+            if (page.empty()) break;
+            for (auto& entry : page)
+                out.emplace_back(std::move(entry.key),
+                                  nt::bin_to_hex(entry.payload));
+            if (page.size() < kPageSize) break;
+            offset += page.size();
         }
-        if (!old_hash.empty())
+        return out;
+    }
+
+    // Registers /system/branch_trees/<hash> as a BRANCH_TREE if missing, and
+    // takes one structural pin on each multigroup the tree references. The
+    // pins are mirrored by LifecycleManager::CascadeBranchTree at GC time.
+    // Idempotent: a second call with the same hash returns immediately.
+    static void register_branch_tree(const std::string& tree_root)
+    {
+        if (tree_root.empty()) return;
+        const auto bt_path = split_path(
+            ("/system/branch_trees/" + tree_root).c_str());
+        if (g_rt->objects.Find(bt_path) != nullptr) return;
+
+        auto bt = std::make_unique<nt::ObjectManager::BranchTree>();
+        bt->merkle_root = tree_root;
+        g_rt->objects.Register(bt_path, std::move(bt), make_branch_tree_type());
+
+        for (const auto& [_, mg_hash] : list_branch_tree(tree_root))
         {
-            const auto p = split_path(("/system/snapshots/" + old_hash).c_str());
-            g_rt->lifecycles.Unpin(g_rt->objects.Find(p));
+            if (mg_hash.empty()) continue;
+            const auto p = split_path(("/system/snapshots/" + mg_hash).c_str());
+            g_rt->lifecycles->Pin(g_rt->objects.Find(p));
         }
     }
 
-    // Reads the current snapshot's (name, root) list for a branch. Returns an
-    // empty vector for unborn branches or any lookup failure.
-    static std::vector<nt::MultigroupCodec::RelationEntry> read_branch_relations(
-        const nt::ObjectManager::Branch& branch)
+    // Adjusts pins when a branch (or session override) moves its bound
+    // branch-tree root. The new tree is pinned before the old is unpinned so
+    // a no-op advance never sees a pinned BranchTree's ref_count briefly hit
+    // zero and trigger cascade collection of every mg it references.
+    static void rebind_branch_tree_pin(const std::string& old_tree_root,
+                                        const std::string& new_tree_root)
     {
-        if (branch.target_hash.empty()) return {};
+        if (old_tree_root == new_tree_root) return;
+        if (!new_tree_root.empty())
+        {
+            register_branch_tree(new_tree_root);
+            const auto p = split_path(
+                ("/system/branch_trees/" + new_tree_root).c_str());
+            g_rt->lifecycles->Pin(g_rt->objects.Find(p));
+        }
+        if (!old_tree_root.empty())
+        {
+            const auto p = split_path(
+                ("/system/branch_trees/" + old_tree_root).c_str());
+            g_rt->lifecycles->Unpin(g_rt->objects.Find(p));
+        }
+    }
 
-        const auto snap_path = split_path(
-            ("/system/snapshots/" + branch.target_hash).c_str());
-        auto* entry = g_rt->objects.Find(snap_path);
-        if (!entry || !entry->object) return {};
+    // Looks up the mg_hash currently bound to `mg_name` in the branch's tree.
+    // Returns empty string when the branch is unborn or the mg is absent.
+    static std::string lookup_branch_mg(const nt::ObjectManager::Branch& branch,
+                                         const std::string& mg_name)
+    {
+        if (branch.target_hash.empty()) return "";
+        auto found = nt::Merkle<std::string>::Get(*g_rt->storage,
+                                                   branch.target_hash, mg_name);
+        if (!found) return "";
+        static const nt::Hash32 zero{};
+        if (*found == zero) return "";
+        return nt::bin_to_hex(*found);
+    }
 
-        auto* mg = dynamic_cast<nt::ObjectManager::Multigroup*>(entry->object.get());
-        if (!mg) return {};
-
-        auto opt = g_rt->storage->Get(mg->merkle_root);
-        if (!opt) return {};
-        return nt::MultigroupCodec::Deserialize(*opt);
+    // Reads the (relation_name, root) list of a specific multigroup under a
+    // branch. Returns empty for unborn branches or absent multigroups.
+    static std::vector<nt::MultigroupCodec::RelationEntry> read_mg_relations(
+        const nt::ObjectManager::Branch& branch,
+        const std::string& mg_name)
+    {
+        const std::string mg_hash = lookup_branch_mg(branch, mg_name);
+        if (mg_hash.empty()) return {};
+        return nt::MultigroupCodec::List(*g_rt->storage, mg_hash);
     }
 
     // Looks up a branch object by path. Returns nullptr when the path does not
@@ -266,57 +335,71 @@ namespace
         return dynamic_cast<nt::ObjectManager::Branch*>(entry->object.get());
     }
 
-    // Parses a path of the form /system/branches/<name>/relations/<relation_name>.
-    // Returns true on success; out-parameters are populated with the branch path
-    // and the relation name. Returns false for any other path shape.
-    static bool split_branch_relation(const std::vector<std::string>& parts,
-                                      std::vector<std::string>& branch_path_out,
-                                      std::string& relation_name_out)
+    // Parses a path of the form
+    //   /system/branches/<name>/multigroups/<mg>/relations/<rel>.
+    // Returns true on success; out-parameters are populated with the branch
+    // path, the multigroup name, and the relation name. Returns false for
+    // any other path shape.
+    static bool split_branch_mg_relation(const std::vector<std::string>& parts,
+                                          std::vector<std::string>& branch_path_out,
+                                          std::string& mg_name_out,
+                                          std::string& relation_name_out)
     {
-        if (parts.size() != 5) return false;
-        if (parts[0] != "system" || parts[1] != "branches" || parts[3] != "relations")
-            return false;
-        branch_path_out = { "system", "branches", parts[2] };
-        relation_name_out = parts[4];
+        if (parts.size() != 7) return false;
+        if (parts[0] != "system"      || parts[1] != "branches"
+         || parts[3] != "multigroups" || parts[5] != "relations") return false;
+        branch_path_out   = { "system", "branches", parts[2] };
+        mg_name_out       = parts[4];
+        relation_name_out = parts[6];
         return true;
     }
 
-    // Applies a per-relation merkle_root update to the branch's current snapshot:
-    // reads the existing (name, root) list, replaces or appends (relation_name,
-    // new_root), registers the resulting snapshot, and advances the branch.
-    // Returns the new snapshot hash, or empty string on error.
+    // Applies a per-relation root update with the full two-level cascade:
+    //   1. Read the (rel, root) list of `mg_name` from the branch's current
+    //      tree (or empty when the mg is absent / branch is unborn).
+    //   2. Insert/replace (relation_name, new_root) in that list.
+    //   3. register_snapshot → new_mg_hash.
+    //   4. Insert (mg_name → new_mg_hash) into the branch tree → new branch
+    //      tree root.
+    //   5. Advance branch.target_hash to the new root and rebind pins.
+    // Returns the new branch tree root on success; empty on error.
     //
-    // Pin/unpin transitions on the branch's bound snapshot are applied here:
-    // the new snapshot is pinned before the old one is unpinned, so an
-    // unchanged (idempotent) advance never sees the snapshot's ref_count
-    // briefly hit zero and get collected.
+    // Pin/unpin transitions are applied via rebind_branch_tree_pin: new mgs
+    // are pinned before old mgs are unpinned, so an unchanged advance never
+    // briefly drops a multigroup's ref_count to zero.
     static std::string commit_relation_update(
         nt::ObjectManager::Branch& branch,
+        const std::string& mg_name,
         const std::string& relation_name,
         const std::string& new_root)
     {
-        auto relations = read_branch_relations(branch);
+        auto relations = read_mg_relations(branch, mg_name);
         auto it = std::find_if(relations.begin(), relations.end(),
                                [&](const auto& e) { return e.first == relation_name; });
         if (it != relations.end()) it->second = new_root;
         else relations.emplace_back(relation_name, new_root);
 
-        const std::string new_snapshot_hash = register_snapshot(relations);
-        if (new_snapshot_hash.empty()) return {};
+        const std::string new_mg_hash = register_snapshot(relations);
+        if (new_mg_hash.empty()) return {};
 
-        const std::string old_hash = branch.target_hash;
-        branch.target_hash = new_snapshot_hash;
-        rebind_snapshot_pin(old_hash, new_snapshot_hash);
-        return new_snapshot_hash;
+        const nt::Hash32 mg_payload = nt::hex_to_bin(new_mg_hash);
+        const std::string new_tree_root = nt::Merkle<std::string>::Insert(
+            *g_rt->storage, branch.target_hash, mg_name, mg_payload);
+
+        const std::string old_tree_root = branch.target_hash;
+        branch.target_hash = new_tree_root;
+        rebind_branch_tree_pin(old_tree_root, new_tree_root);
+        return new_tree_root;
     }
 
-    // Returns the merkle_root of a named relation in the branch's current
-    // snapshot. Empty string when the branch is unborn or the relation is
-    // absent.
+    // Returns the merkle_root of a named relation in the specified mg under
+    // the branch's current tree. Empty when the branch is unborn, the mg
+    // doesn't exist, or the relation is absent.
     static std::string read_relation_root(const nt::ObjectManager::Branch& branch,
+                                          const std::string& mg_name,
                                           const std::string& relation_name)
     {
-        const auto relations = read_branch_relations(branch);
+        const auto relations = read_mg_relations(branch, mg_name);
         auto it = std::find_if(relations.begin(), relations.end(),
                                [&](const auto& e) { return e.first == relation_name; });
         return (it == relations.end()) ? std::string{} : it->second;
@@ -399,12 +482,15 @@ int rnt_init(const char* driver, const char* storage_path)
             rt->storage = std::make_unique<nt::SqliteBackend>(
                 storage_path ? storage_path : ":memory:");
 
-        rt->references = std::make_unique<nt::NamespaceReferenceManager>(rt->objects);
+        rt->lifecycles = std::make_unique<nt::LifecycleManager>(
+            rt->objects, *rt->storage);
+        rt->references = std::make_unique<nt::NamespaceReferenceManager>(
+            rt->objects, *rt->storage);
         rt->handler = std::make_unique<nt::HandlerManager>(
-            rt->objects, rt->permissions, rt->identities, rt->lifecycles,
+            rt->objects, rt->permissions, rt->identities, *rt->lifecycles,
             *rt->references);
         rt->cursors = std::make_unique<nt::CursorManager>(
-            *rt->storage, &rt->lifecycles, &rt->objects);
+            *rt->storage, rt->lifecycles.get(), &rt->objects);
         g_rt = std::move(rt);
 
         // Register the default branch on first boot so that
@@ -469,10 +555,10 @@ int rnt_session_close(const char* session_hash)
     auto* session = dynamic_cast<nt::ObjectManager::Session*>(entry->object.get());
     if (!session) return -1;
 
-    // Release every snapshot pin this session was holding before the entry
-    // disappears, so dependent snapshots become GC-eligible.
+    // Release every pin this session was holding before the entry disappears,
+    // so the dependent multigroups become GC-eligible.
     for (const auto& [name, hash] : session->branch_overrides)
-        rebind_snapshot_pin(hash, "");
+        rebind_branch_tree_pin(hash, "");
     session->branch_overrides.clear();
 
     return g_rt->objects.Unregister(session_path) ? 0 : -1;
@@ -502,15 +588,16 @@ int rnt_session_set_branch(const char* session_hash,
     if (hash.empty())
     {
         session->branch_overrides.erase(branch_name);
-        rebind_snapshot_pin(old_hash, "");
+        rebind_branch_tree_pin(old_hash, "");
         return 0;
     }
 
-    const auto snap_path = split_path(("/system/snapshots/" + hash).c_str());
-    if (g_rt->objects.Find(snap_path) == nullptr) return -1;
+    // target_hash is a branch-tree root — a content-addressed blob produced
+    // by an earlier commit. Reject if unknown.
+    if (!g_rt->storage->Get(hash)) return -1;
 
     session->branch_overrides[branch_name] = hash;
-    rebind_snapshot_pin(old_hash, hash);
+    rebind_branch_tree_pin(old_hash, hash);
     return 0;
 }
 
@@ -554,15 +641,15 @@ int rnt_branch_advance(const char* branch_path, const char* new_hash)
     if (!branch) return -1;
 
     const std::string hash(new_hash);
-    if (!hash.empty())
-    {
-        const auto snap_path = split_path(("/system/snapshots/" + hash).c_str());
-        if (g_rt->objects.Find(snap_path) == nullptr) return -1;
-    }
+    // Non-empty branch-tree roots must already exist in the KV store. The
+    // branch tree is a content-addressed blob produced by an earlier mutation
+    // through commit_relation_update; advancing to an unknown root is treated
+    // as a caller bug.
+    if (!hash.empty() && !g_rt->storage->Get(hash)) return -1;
 
     const std::string old_hash = branch->target_hash;
     branch->target_hash = hash;
-    rebind_snapshot_pin(old_hash, hash);
+    rebind_branch_tree_pin(old_hash, hash);
     return 0;
 }
 
@@ -572,22 +659,24 @@ int rnt_register_relation(const char* path)
     const auto parts = split_path(path);
 
     std::vector<std::string> branch_path;
-    std::string relation_name;
-    if (!split_branch_relation(parts, branch_path, relation_name)) return -1;
+    std::string mg_name, relation_name;
+    if (!split_branch_mg_relation(parts, branch_path, mg_name, relation_name))
+        return -1;
 
     auto* branch = find_branch(branch_path);
     if (!branch) return -1;
 
-    // Idempotent: if the relation is already present in the branch's current
-    // snapshot, the call succeeds without producing a new snapshot.
-    const auto current = read_branch_relations(*branch);
+    // Idempotent: if the relation is already present in the named mg's
+    // current snapshot, the call succeeds without producing a new snapshot.
+    const auto current = read_mg_relations(*branch, mg_name);
     const bool already_present = std::any_of(
         current.begin(), current.end(),
         [&](const auto& e) { return e.first == relation_name; });
     if (already_present) return 0;
 
     // Empty merkle_root signals a relation with no tuples.
-    return commit_relation_update(*branch, relation_name, "").empty() ? -1 : 0;
+    return commit_relation_update(*branch, mg_name, relation_name, "").empty()
+        ? -1 : 0;
 }
 
 int rnt_register_branch(const char* path, const char* target_hash)
@@ -597,30 +686,46 @@ int rnt_register_branch(const char* path, const char* target_hash)
     if (g_rt->objects.Find(parts) != nullptr) return 0;
 
     const std::string hash = target_hash ? target_hash : "";
-    if (!hash.empty())
-    {
-        const auto snap_path = split_path(("/system/snapshots/" + hash).c_str());
-        if (g_rt->objects.Find(snap_path) == nullptr) return -1;
-    }
+    // Non-empty target_hash is a branch-tree root produced by an earlier
+    // commit; it must already exist as a KV blob.
+    if (!hash.empty() && !g_rt->storage->Get(hash)) return -1;
 
     auto branch         = std::make_unique<nt::ObjectManager::Branch>();
     branch->name        = parts.empty() ? "" : parts.back();
     branch->target_hash = hash;
 
     g_rt->objects.Register(parts, std::move(branch), make_branch_type());
-    rebind_snapshot_pin("", hash);
+    rebind_branch_tree_pin("", hash);
     return 0;
 }
 
-int rnt_list_relations(const char* branch_path, char** out)
+int rnt_list_relations(const char* branch_mg_path, char** out)
+{
+    if (!is_initialized() || !branch_mg_path || !out) return -1;
+    const auto parts = split_path(branch_mg_path);
+    if (parts.size() != 5) return -1;
+    if (parts[0] != "system" || parts[1] != "branches"
+     || parts[3] != "multigroups") return -1;
+
+    auto* branch = find_branch({ "system", "branches", parts[2] });
+    if (!branch) return -1;
+    const auto relations = read_mg_relations(*branch, parts[4]);
+    std::string result;
+    for (const auto& [name, root] : relations)
+        result += name + "\t" + root + "\n";
+    *out = heap_str(result);
+    return 0;
+}
+
+int rnt_list_branch_multigroups(const char* branch_path, char** out)
 {
     if (!is_initialized() || !branch_path || !out) return -1;
     auto* branch = find_branch(split_path(branch_path));
     if (!branch) return -1;
-    const auto relations = read_branch_relations(*branch);
+    const auto mgs = list_branch_tree(branch->target_hash);
     std::string result;
-    for (const auto& [name, root] : relations)
-        result += name + "\t" + root + "\n";
+    for (const auto& [name, mg_hash] : mgs)
+        result += name + "\t" + mg_hash + "\n";
     *out = heap_str(result);
     return 0;
 }
@@ -634,9 +739,7 @@ int rnt_list_snapshot_relations(const char* snapshot_hash, char** out)
     if (!entry || !entry->object) return -1;
     auto* mg = dynamic_cast<nt::ObjectManager::Multigroup*>(entry->object.get());
     if (!mg) return -1;
-    auto opt = g_rt->storage->Get(mg->merkle_root);
-    if (!opt) { *out = heap_str(""); return 0; }
-    const auto relations = nt::MultigroupCodec::Deserialize(*opt);
+    const auto relations = nt::MultigroupCodec::List(*g_rt->storage, mg->merkle_root);
     std::string result;
     for (const auto& [name, root] : relations)
         result += name + "\t" + root + "\n";
@@ -650,20 +753,23 @@ int rnt_link_tuple(const char* relation_path, const char* kv_attrs, char** hash_
     const auto parts = split_path(relation_path);
 
     std::vector<std::string> branch_path;
-    std::string relation_name;
-    if (!split_branch_relation(parts, branch_path, relation_name)) return -1;
+    std::string mg_name, relation_name;
+    if (!split_branch_mg_relation(parts, branch_path, mg_name, relation_name))
+        return -1;
 
     auto* branch = find_branch(branch_path);
     if (!branch) return -1;
 
-    const std::string old_root = read_relation_root(*branch, relation_name);
+    const std::string old_root = read_relation_root(*branch, mg_name, relation_name);
 
     auto bytes           = nt::TupleCodec::Serialize(parse_kv(kv_attrs));
     const auto tuple_hash = g_rt->storage->Put(std::move(bytes));
+    const auto tuple_bin  = nt::hex_to_bin(tuple_hash);
     const std::string new_root =
-        nt::Merkle::Insert(*g_rt->storage, old_root, tuple_hash);
+        nt::Merkle<nt::Hash32>::Insert(*g_rt->storage, old_root,
+                                        tuple_bin, tuple_bin);
 
-    if (commit_relation_update(*branch, relation_name, new_root).empty())
+    if (commit_relation_update(*branch, mg_name, relation_name, new_root).empty())
         return -1;
 
     *hash_out = heap_str(tuple_hash);
@@ -676,17 +782,19 @@ int rnt_unlink_tuple(const char* relation_path, const char* tuple_hash)
     const auto parts = split_path(relation_path);
 
     std::vector<std::string> branch_path;
-    std::string relation_name;
-    if (!split_branch_relation(parts, branch_path, relation_name)) return -1;
+    std::string mg_name, relation_name;
+    if (!split_branch_mg_relation(parts, branch_path, mg_name, relation_name))
+        return -1;
 
     auto* branch = find_branch(branch_path);
     if (!branch) return -1;
 
-    const std::string old_root = read_relation_root(*branch, relation_name);
+    const std::string old_root = read_relation_root(*branch, mg_name, relation_name);
     const std::string new_root =
-        nt::Merkle::Remove(*g_rt->storage, old_root, tuple_hash);
+        nt::Merkle<nt::Hash32>::Remove(*g_rt->storage, old_root,
+                                        nt::hex_to_bin(tuple_hash));
 
-    return commit_relation_update(*branch, relation_name, new_root).empty()
+    return commit_relation_update(*branch, mg_name, relation_name, new_root).empty()
         ? -1 : 0;
 }
 
@@ -696,13 +804,15 @@ int rnt_clear_relation(const char* relation_path)
     const auto parts = split_path(relation_path);
 
     std::vector<std::string> branch_path;
-    std::string relation_name;
-    if (!split_branch_relation(parts, branch_path, relation_name)) return -1;
+    std::string mg_name, relation_name;
+    if (!split_branch_mg_relation(parts, branch_path, mg_name, relation_name))
+        return -1;
 
     auto* branch = find_branch(branch_path);
     if (!branch) return -1;
 
-    return commit_relation_update(*branch, relation_name, "").empty() ? -1 : 0;
+    return commit_relation_update(*branch, mg_name, relation_name, "").empty()
+        ? -1 : 0;
 }
 
 int rnt_relation_root(const char* relation_path, char** root_hash_out)
@@ -711,16 +821,17 @@ int rnt_relation_root(const char* relation_path, char** root_hash_out)
     const auto parts = split_path(relation_path);
 
     std::vector<std::string> branch_path;
-    std::string relation_name;
-    if (!split_branch_relation(parts, branch_path, relation_name)) return -1;
+    std::string mg_name, relation_name;
+    if (!split_branch_mg_relation(parts, branch_path, mg_name, relation_name))
+        return -1;
 
     auto* branch = find_branch(branch_path);
     if (!branch) return -1;
 
     // Distinguish "relation registered but empty" (returns 0 with empty hash)
-    // from "relation not in this branch's snapshot" (returns -1). Without this
-    // check an unborn branch would silently report every relation as empty.
-    const auto relations = read_branch_relations(*branch);
+    // from "relation not in this multigroup's snapshot" (returns -1). Without
+    // this check an unborn branch would silently report every relation empty.
+    const auto relations = read_mg_relations(*branch, mg_name);
     auto it = std::find_if(relations.begin(), relations.end(),
                            [&](const auto& e) { return e.first == relation_name; });
     if (it == relations.end()) return -1;
