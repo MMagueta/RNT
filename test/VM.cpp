@@ -221,3 +221,43 @@ TEST_CASE("TAKE limits tuples emitted from a SCAN", "[take]")
     f.cursors.Close(cursor);
     f.handler.Close(handle);
 }
+
+TEST_CASE("PROJECT filters tuple attributes by name", "[project]")
+{
+    Fixture f;
+    const std::vector<std::string> path = { "relations", "people" };
+
+    f.objects.Register(path, std::make_unique<nt::ObjectManager::Relation>(), make_relation_type());
+    store_tuple(f.backend, f.objects, path, { { "name", "John" }, { "age", "30" }, { "city", "Lisbon" } });
+
+    auto* handle = f.handler.Open(path, &f.conn);
+    REQUIRE(handle != nullptr);
+    auto* rel = dynamic_cast<nt::ObjectManager::Relation*>(f.objects.Find(path)->object.get());
+    auto* cursor = f.cursors.Open(handle, rel->merkle_root);
+    REQUIRE(cursor != nullptr);
+
+    nt::PlanNode scan;
+    scan.op          = nt::PlanNode::Op::SCAN;
+    scan.scan_cursor = cursor;
+
+    nt::PlanNode project;
+    project.op            = nt::PlanNode::Op::PROJECT;
+    project.left          = &scan;
+    project.project_attrs = { "name", "city" };
+
+    nt::VM vm(f.cursors);
+    nt::Tuple* t = vm.Next(&project);
+    REQUIRE(t != nullptr);
+
+    std::vector<std::string> names;
+    for (const auto& attr : t->attrs()) names.push_back(attr.name);
+
+    REQUIRE(names.size() == 2);
+    REQUIRE(std::find(names.begin(), names.end(), "name") != names.end());
+    REQUIRE(std::find(names.begin(), names.end(), "city") != names.end());
+    REQUIRE(std::find(names.begin(), names.end(), "age") == names.end());
+    REQUIRE(vm.Next(&project) == nullptr);
+
+    f.cursors.Close(cursor);
+    f.handler.Close(handle);
+}

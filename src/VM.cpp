@@ -1,4 +1,5 @@
 #include "VM.h"
+#include "Types.h"
 
 namespace nt
 {
@@ -49,6 +50,22 @@ namespace nt
         {
             case PlanNode::Op::SCAN:
                 return cursors_.Next(node->scan_cursor);
+
+            case PlanNode::Op::PROJECT:
+            {
+                Tuple* next = Next(node->left);
+                if (next == nullptr) return nullptr;
+
+                std::vector<Attribute> projected;
+                for (const auto& attr : next->attrs())
+                {
+                    if (node->project_attrs.find(attr.name) != node->project_attrs.end())
+                        projected.push_back(attr);
+                }
+
+                node->project_buffer.emplace(std::move(projected));
+                return &*node->project_buffer;
+            }
 
             case PlanNode::Op::JOIN:
             {
