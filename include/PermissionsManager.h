@@ -37,7 +37,7 @@ namespace nt
      *       rather than re-evaluating the descriptor on every call.
      *       See docs/reactos-ob-comparison.md §4.
      */
-    class NT_API PermissionsManager
+    class PermissionsManager
     {
     public:
         /**

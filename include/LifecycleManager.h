@@ -23,7 +23,7 @@ namespace nt
      * Monitor / Unmonitor manage `handle_count`. Pin / Unpin manage
      * `reference_count`. See docs/reactos-ob-comparison.md §1.
      */
-    class NT_API LifecycleManager
+    class LifecycleManager
     {
     public:
         /**

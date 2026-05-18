@@ -21,7 +21,7 @@ namespace nt
      *       so that error logs identify the type without dereferencing the pointer.
      *       See docs/reactos-ob-comparison.md §2.
      */
-    class NT_API IdentityManager
+    class IdentityManager
     {
     public:
         /**

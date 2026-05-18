@@ -10,7 +10,7 @@
 namespace nt
 {
     /** @brief Top-level runtime object used by applications and the console entry point. */
-    class NT_API NT
+    class NT
     {
     public:
         /**

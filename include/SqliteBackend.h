@@ -23,7 +23,7 @@
 
 namespace nt
 {
-    class NT_API SqliteBackend : public IStorageBackend
+    class SqliteBackend : public IStorageBackend
     {
     public:
         /**

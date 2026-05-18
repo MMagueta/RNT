@@ -34,7 +34,7 @@ namespace nt
      * Merkle::Page(backend, merkle_root, fetch_offset, PAGE_SIZE) to retrieve
      * the next page of tuple hashes without loading sibling subtrees.
      */
-    class NT_API CursorManager
+    class CursorManager
     {
     public:
         static constexpr std::size_t PAGE_SIZE = 1;

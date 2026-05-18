@@ -21,7 +21,7 @@
 
 namespace nt
 {
-    class NT_API InMemoryBackend : public IStorageBackend
+    class InMemoryBackend : public IStorageBackend
     {
     public:
         std::string Put(std::vector<uint8_t> value) override;

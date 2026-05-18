@@ -63,7 +63,7 @@ namespace nt
      * (for EPHEMERAL_RELATION cursors) or ignored (for stored RELATION cursors,
      * which need no per-probe parameterization).
      */
-    struct NT_API PathArg
+    struct PathArg
     {
         enum class Kind { Var, Const };
 
@@ -91,7 +91,7 @@ namespace nt
      *
      * TODO: Add PROJECT operator as the query layer grows.
      */
-    struct NT_API PlanNode
+    struct PlanNode
     {
         enum class Op { SCAN, JOIN, TAKE };
 
@@ -134,7 +134,7 @@ namespace nt
         std::optional<Tuple> join_buffer;
     };
 
-    class NT_API VM
+    class VM
     {
     public:
         // TODO: CursorManager should be injected as a shared runtime instance,
