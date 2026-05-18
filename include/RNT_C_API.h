@@ -35,6 +35,8 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include "Api.h"
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -66,7 +68,7 @@ typedef void* rnt_cursor_t;
  *                      "memory".
  * @return 0 on success, negative on error.
  */
-int rnt_init(const char* driver, const char* storage_path);
+NT_API int rnt_init(const char* driver, const char* storage_path);
 
 /* ------------------------------------------------------------------ */
 /* Authentication                                                       */
@@ -80,7 +82,7 @@ int rnt_init(const char* driver, const char* storage_path);
  *                     Release with rnt_free_string(). NULL on error.
  * @return 0 on success, negative when authentication is rejected.
  */
-int rnt_firewall(const char* auth_method, char** claims_out);
+NT_API int rnt_firewall(const char* auth_method, char** claims_out);
 
 /* ------------------------------------------------------------------ */
 /* Session lifecycle                                                    */
@@ -100,7 +102,7 @@ int rnt_firewall(const char* auth_method, char** claims_out);
  *                            Release with rnt_free_string().
  * @return 0 on success, negative on error.
  */
-int rnt_session_open(void* connection_context, char** session_hash_out);
+NT_API int rnt_session_open(void* connection_context, char** session_hash_out);
 
 /**
  * @brief Closes a session, unregistering it from /system/sessions/<hash>.
@@ -112,7 +114,7 @@ int rnt_session_open(void* connection_context, char** session_hash_out);
  * @param session_hash  Hash returned by rnt_session_open.
  * @return 0 on success, negative when the hash does not match an active session.
  */
-int rnt_session_close(const char* session_hash);
+NT_API int rnt_session_close(const char* session_hash);
 
 /**
  * @brief Sets a per-session override for a branch.
@@ -131,9 +133,9 @@ int rnt_session_close(const char* session_hash);
  * @param target_hash   Snapshot hash to bind, or "" to clear.
  * @return 0 on success, negative on error.
  */
-int rnt_session_set_branch(const char* session_hash,
-                           const char* branch_name,
-                           const char* target_hash);
+NT_API int rnt_session_set_branch(const char* session_hash,
+                                  const char* branch_name,
+                                  const char* target_hash);
 
 /* ------------------------------------------------------------------ */
 /* Handle lifecycle                                                     */
@@ -151,13 +153,13 @@ int rnt_session_set_branch(const char* session_hash,
  * @param claims  Claim string returned by rnt_firewall (may be NULL).
  * @return Handle pointer, or NULL when the path is not found or access is denied.
  */
-rnt_handle_t rnt_open_handle(const char* path, const char* claims);
+NT_API rnt_handle_t rnt_open_handle(const char* path, const char* claims);
 
 /**
  * @brief Closes a handle, running HandlerManager::Close and Unmonitor.
  * @return 0 on success, negative on error.
  */
-int rnt_close_handle(rnt_handle_t handle);
+NT_API int rnt_close_handle(rnt_handle_t handle);
 
 /**
  * @brief Reads the current branch-tree root hash from a BRANCH object.
@@ -172,7 +174,7 @@ int rnt_close_handle(rnt_handle_t handle);
  *                         (possibly empty). Release with rnt_free_string().
  * @return 0 on success, negative when the handle is not a BRANCH.
  */
-int rnt_branch_target(rnt_handle_t handle, char** target_hash_out);
+NT_API int rnt_branch_target(rnt_handle_t handle, char** target_hash_out);
 
 /**
  * @brief Atomically advances a branch to point at a new branch-tree root.
@@ -194,7 +196,7 @@ int rnt_branch_target(rnt_handle_t handle, char** target_hash_out);
  *         not BRANCH, or @p new_hash is non-empty but no matching blob
  *         exists in the KV store.
  */
-int rnt_branch_advance(const char* branch_path, const char* new_hash);
+NT_API int rnt_branch_advance(const char* branch_path, const char* new_hash);
 
 /* ------------------------------------------------------------------ */
 /* Object registration                                                  */
@@ -210,7 +212,7 @@ int rnt_branch_advance(const char* branch_path, const char* new_hash);
  *             "/system/branches/<branch>/multigroups/<mg>/relations/<rel>".
  * @return 0 on success, negative on error.
  */
-int rnt_register_relation(const char* path);
+NT_API int rnt_register_relation(const char* path);
 
 /**
  * @brief Registers a BRANCH object at the given path pointing at a branch-tree root.
@@ -226,7 +228,7 @@ int rnt_register_relation(const char* path);
  *                     or "" for unborn).
  * @return 0 on success, negative on error.
  */
-int rnt_register_branch(const char* path, const char* target_hash);
+NT_API int rnt_register_branch(const char* path, const char* target_hash);
 
 /**
  * @brief Lists all relations of a specific multigroup under a branch.
@@ -243,7 +245,7 @@ int rnt_register_branch(const char* path, const char* target_hash);
  * @return 0 on success, negative when the path shape is wrong or the branch
  *         is not found.
  */
-int rnt_list_relations(const char* branch_mg_path, char** out);
+NT_API int rnt_list_relations(const char* branch_mg_path, char** out);
 
 /**
  * @brief Lists all multigroups bound to a branch.
@@ -256,7 +258,7 @@ int rnt_list_relations(const char* branch_mg_path, char** out);
  * @param out          Heap-allocated string; release with rnt_free_string().
  * @return 0 on success, negative when the branch is not found.
  */
-int rnt_list_branch_multigroups(const char* branch_path, char** out);
+NT_API int rnt_list_branch_multigroups(const char* branch_path, char** out);
 
 /**
  * @brief Lists all relations stored in a specific snapshot.
@@ -270,7 +272,7 @@ int rnt_list_branch_multigroups(const char* branch_path, char** out);
  * @param out            Set to heap-allocated string. Release with rnt_free_string().
  * @return 0 on success, negative when the snapshot is not registered.
  */
-int rnt_list_snapshot_relations(const char* snapshot_hash, char** out);
+NT_API int rnt_list_snapshot_relations(const char* snapshot_hash, char** out);
 
 /* ------------------------------------------------------------------ */
 /* Tuple storage                                                        */
@@ -290,9 +292,9 @@ int rnt_list_snapshot_relations(const char* snapshot_hash, char** out);
  *                       Release with rnt_free_string(). NULL on error.
  * @return 0 on success, negative on error.
  */
-int rnt_link_tuple(const char* relation_path,
-                   const char* kv_attrs,
-                   char**      hash_out);
+NT_API int rnt_link_tuple(const char* relation_path,
+                          const char* kv_attrs,
+                          char**      hash_out);
 
 /**
  * @brief Removes a tuple from the relation's Merkle tree and tuple store.
@@ -306,7 +308,7 @@ int rnt_link_tuple(const char* relation_path,
  * @param tuple_hash     64-character hex SHA-256 of the tuple to remove.
  * @return 0 on success, negative when the relation is not found.
  */
-int rnt_unlink_tuple(const char* relation_path, const char* tuple_hash);
+NT_API int rnt_unlink_tuple(const char* relation_path, const char* tuple_hash);
 
 /**
  * @brief Resets a relation's Merkle root to the empty-tree state.
@@ -318,7 +320,7 @@ int rnt_unlink_tuple(const char* relation_path, const char* tuple_hash);
  * @param relation_path  Slash-separated relation path.
  * @return 0 on success, negative when the relation is not found.
  */
-int rnt_clear_relation(const char* relation_path);
+NT_API int rnt_clear_relation(const char* relation_path);
 
 /**
  * @brief Returns the current Merkle root hash for a relation.
@@ -333,7 +335,7 @@ int rnt_clear_relation(const char* relation_path);
  *                       Release with rnt_free_string().
  * @return 0 on success, negative when the relation is not found.
  */
-int rnt_relation_root(const char* relation_path, char** root_hash_out);
+NT_API int rnt_relation_root(const char* relation_path, char** root_hash_out);
 
 /* ------------------------------------------------------------------ */
 /* Cursor and VM                                                        */
@@ -349,7 +351,7 @@ int rnt_relation_root(const char* relation_path, char** root_hash_out);
  * @param handle  Open RELATION handle.
  * @return Cursor pointer, or NULL on error.
  */
-rnt_cursor_t rnt_cursor_open(rnt_handle_t handle);
+NT_API rnt_cursor_t rnt_cursor_open(rnt_handle_t handle);
 
 /**
  * @brief Advances the cursor and returns the next tuple as a kv string.
@@ -363,13 +365,13 @@ rnt_cursor_t rnt_cursor_open(rnt_handle_t handle);
  *                     Release with rnt_free_string() when non-NULL.
  * @return 1 when a tuple was returned, 0 when exhausted, negative on error.
  */
-int rnt_cursor_next(rnt_cursor_t cursor, char** tuple_out);
+NT_API int rnt_cursor_next(rnt_cursor_t cursor, char** tuple_out);
 
 /**
  * @brief Closes a cursor and releases its resources.
  * @return 0 on success, negative on error.
  */
-int rnt_cursor_close(rnt_cursor_t cursor);
+NT_API int rnt_cursor_close(rnt_cursor_t cursor);
 
 /* ------------------------------------------------------------------ */
 /* VM plan builder                                                      */
@@ -388,7 +390,7 @@ typedef void* rnt_plan_t;
  *  "/system/branches/main/multigroups/warehouse/relations/public:users".
  * @return Plan node, or NULL when the relation does not exist or cannot be opened.
  */
-rnt_plan_t rnt_plan_scan(const char* relation_path);
+NT_API rnt_plan_t rnt_plan_scan(const char* relation_path);
 
 /**
  * @brief Creates a nested-loop JOIN plan node.
@@ -399,7 +401,7 @@ rnt_plan_t rnt_plan_scan(const char* relation_path);
  *
  * @return Plan node, or NULL on error.
  */
-rnt_plan_t rnt_plan_join(rnt_plan_t left, rnt_plan_t right);
+NT_API rnt_plan_t rnt_plan_join(rnt_plan_t left, rnt_plan_t right);
 
 /**
  * @brief Creates a TAKE plan node that limits output to at most @p limit tuples.
@@ -408,7 +410,7 @@ rnt_plan_t rnt_plan_join(rnt_plan_t left, rnt_plan_t right);
  *
  * @return Plan node, or NULL on error.
  */
-rnt_plan_t rnt_plan_take(rnt_plan_t source, size_t limit);
+NT_API rnt_plan_t rnt_plan_take(rnt_plan_t source, size_t limit);
 
 /**
  * @brief Releases a plan that was built but not yet executed.
@@ -417,7 +419,7 @@ rnt_plan_t rnt_plan_take(rnt_plan_t source, size_t limit);
  * nodes. Safe to call with NULL. Do NOT call after rnt_vm_execute_plan —
  * that function takes ownership.
  */
-void rnt_plan_free(rnt_plan_t plan);
+NT_API void rnt_plan_free(rnt_plan_t plan);
 
 /**
  * @brief Executes a plan tree and returns a streaming VM cursor.
@@ -428,7 +430,7 @@ void rnt_plan_free(rnt_plan_t plan);
  *
  * @return VM cursor, or NULL when the plan is NULL.
  */
-rnt_cursor_t rnt_vm_execute_plan(rnt_plan_t plan);
+NT_API rnt_cursor_t rnt_vm_execute_plan(rnt_plan_t plan);
 
 /**
  * @brief Advances a VM cursor and returns the next merged tuple as a kv string.
@@ -440,23 +442,23 @@ rnt_cursor_t rnt_vm_execute_plan(rnt_plan_t plan);
  *                   Release with rnt_free_string() when non-NULL.
  * @return 1 when a tuple was returned, 0 when exhausted, negative on error.
  */
-int rnt_vm_cursor_next(rnt_cursor_t vm_cursor, char** tuple_out);
+NT_API int rnt_vm_cursor_next(rnt_cursor_t vm_cursor, char** tuple_out);
 
 /**
  * @brief Closes a VM cursor, releases all plan nodes, cursors, and handles.
  * @return 0 on success, negative on error.
  */
-int rnt_vm_cursor_close(rnt_cursor_t vm_cursor);
+NT_API int rnt_vm_cursor_close(rnt_cursor_t vm_cursor);
 
 /* ------------------------------------------------------------------ */
 /* Memory management                                                    */
 /* ------------------------------------------------------------------ */
 
 /** @brief Releases a string allocated by the API. Safe to call with NULL. */
-void rnt_free_string(char* s);
+NT_API void rnt_free_string(char* s);
 
 /** @brief Releases a byte buffer allocated by the API. Safe to call with NULL. */
-void rnt_free_bytes(uint8_t* p);
+NT_API void rnt_free_bytes(uint8_t* p);
 
 #ifdef __cplusplus
 }
