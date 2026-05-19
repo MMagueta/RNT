@@ -2,6 +2,8 @@
 
 #include "Merkle.h"
 
+#include <map>
+
 namespace nt::MultigroupCodec
 {
     // A relation with zero tuples reports an empty merkle_root externally.
@@ -24,8 +26,12 @@ namespace nt::MultigroupCodec
     std::string Build(IStorageBackend& store,
                       const std::vector<RelationEntry>& relations)
     {
-        std::string root;
+        std::map<std::string, std::string> canonical;
         for (const auto& [name, root_hex] : relations)
+            canonical[name] = root_hex;
+
+        std::string root;
+        for (const auto& [name, root_hex] : canonical)
             root = nt::Merkle<std::string>::Insert(store, root, name,
                                                     encode_payload(root_hex));
         return root;

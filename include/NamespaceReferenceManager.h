@@ -67,7 +67,7 @@ namespace nt
      * @todo Define the batch-update API with all-or-nothing contention semantics.
      *       See docs/reactos-ob-comparison.md §8.
      */
-    class NT_API NamespaceReferenceManager
+    class NamespaceReferenceManager
     {
     public:
         /**

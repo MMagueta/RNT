@@ -21,7 +21,7 @@ namespace nt
     class PermissionsManager;
 
     /** @brief Opens and closes authorized handles to registry objects. */
-    class NT_API HandlerManager
+    class HandlerManager
     {
     public:
         /**

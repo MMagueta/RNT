@@ -25,7 +25,7 @@ namespace nt
      * the metadata needed to reason about object type, path, references, and
      * handles while the concrete storage model is still being designed.
      */
-    class NT_API ObjectManager
+    class ObjectManager
     {
     public:
         /** @brief Base type for objects stored in the registry. */
@@ -224,7 +224,7 @@ namespace nt
          * maps `offset` to the appropriate pair via a bijective enumeration scheme
          * (e.g. Cantor pairing); callers must bound such scans with a TAKE node.
          */
-        struct NT_API ephemeral_object_type : object_type
+        struct ephemeral_object_type : object_type
         {
             enum class Cardinality { Finite, ConstrainedFinite, AlephZero, Continuum };
 
