@@ -29,7 +29,7 @@ std::string mk_root(char c, char d = '0')
 
 }  // namespace
 
-TEST_CASE("Build is order-independent — tree sorts intrinsically",
+TEST_CASE("Build is order-independent - tree sorts intrinsically",
           "[multigroup-codec]")
 {
     nt::InMemoryBackend a, b;
