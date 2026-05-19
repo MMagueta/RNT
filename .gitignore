@@ -1,5 +1,6 @@
 .vs
 build
+_build
 out
 x64
 Debug
@@ -32,6 +33,8 @@ RNT.lib
 libRNT.so
 libRNT.dylib
 docs/generated/
+.cache
+_build_nix
 
 # vcpkg manifest mode artifacts
 vcpkg_installed

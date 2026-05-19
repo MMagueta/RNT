@@ -6,6 +6,7 @@
 
 #include <optional>
 #include <string>
+#include <unordered_set>
 #include <vector>
 
 /**
@@ -88,12 +89,11 @@ namespace nt
      *           (O(1) membership probe when all args are bound).
      * - TAKE  : passes at most take_limit tuples through, then returns nullptr. Use
      *           this to bound scans over AlephZero ephemeral relations.
-     *
-     * TODO: Add PROJECT operator as the query layer grows.
+     * - PROJECT: filters each input tuple to the named attributes in project_attrs.
      */
     struct PlanNode
     {
-        enum class Op { SCAN, JOIN, TAKE };
+        enum class Op { SCAN, JOIN, TAKE, PROJECT };
 
         Op        op;
         PlanNode* left  = nullptr;
@@ -117,6 +117,10 @@ namespace nt
         /** TAKE: maximum number of tuples to emit before returning nullptr. */
         std::size_t take_limit = 0;
         std::size_t take_count = 0; /**< Runtime counter; mutable during execution. */
+
+        /** PROJECT: unordered set of attribute names to keep. */
+        std::unordered_set<std::string> project_attrs;
+        std::optional<Tuple> project_buffer;
 
         /**
          * JOIN runtime state.
@@ -156,6 +160,7 @@ namespace nt
          *         probes until a match is found or the inner is exhausted.
          * - TAKE  counts emitted tuples and returns nullptr once the limit
          *         is reached.
+         * - PROJECT filters an input tuple to the requested attribute names.
          *
          * @param node Root of the plan subtree to evaluate.
          * @return Next matching tuple, or nullptr when the plan is exhausted.
