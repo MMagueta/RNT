@@ -66,7 +66,7 @@ module C = struct
     with_output_pointer (ptr mdb_txn) (from_voidp mdb_txn null) (mdb_txn_begin env parent flags)
 
   let mdb_txn_commit = foreign "mdb_txn_commit" (ptr mdb_txn @-> returning mdb_result)
-  let mdb_txn_abort = foreign "mdb_txn_abort" (ptr mdb_txn @-> returning mdb_result)
+  let mdb_txn_abort = foreign "mdb_txn_abort" (ptr mdb_txn @-> returning void)
 
   (* TODO: make it so that we do not need to copy bytes to a separate array *)
   let carray_of_bytes (b : bytes) =
@@ -79,12 +79,18 @@ module C = struct
     CArray.iteri (Bytes.set buffer) arr;
     buffer
 
-  let mdb_val_ptr_of_bytes (b : bytes) =
+  let with_mdb_val (b : bytes) body =
     let buf = carray_of_bytes b in
     let s = make mdb_val in
     setf s mv_size (Unsigned.Size_t.of_int (Bytes.length b));
     setf s mv_data (to_voidp (CArray.start buf));
-    addr s
+    (* MDB_val contains a raw pointer, but that pointer doees not keep
+       the OCaml array alive through GC. Returning only the structure
+       point could allow collection of the buffer before LMDB is done
+       with it. The Sys.opaque_identity hides it from OCaml's
+       optimizations. *)
+    Fun.protect ~finally:(fun () -> ignore (Sys.opaque_identity buf))
+      (fun () -> body (addr s))
 
   let bytes_of_mdb_val (s : mdb_val structure) =
     let buf =
@@ -97,7 +103,8 @@ module C = struct
       (ptr mdb_txn @-> mdb_dbi @-> ptr mdb_val @-> ptr mdb_val @-> returning mdb_result)
 
   let mdb_get' txn dbi key =
-    with_output_pointer mdb_val (make mdb_val) (mdb_get txn dbi (mdb_val_ptr_of_bytes key))
+    with_mdb_val key (fun key ->
+        with_output_pointer mdb_val (make mdb_val) (mdb_get txn dbi key))
     |> Result.map bytes_of_mdb_val
 
   let mdb_put =
@@ -105,7 +112,8 @@ module C = struct
       (ptr mdb_txn @-> mdb_dbi @-> ptr mdb_val @-> ptr mdb_val @-> uint @-> returning mdb_result)
 
   let mdb_put' txn dbi key data flags =
-    mdb_put txn dbi (mdb_val_ptr_of_bytes key) (mdb_val_ptr_of_bytes data) flags
+    with_mdb_val key (fun key ->
+        with_mdb_val data (fun data -> mdb_put txn dbi key data flags))
 
   let mdb_strerror = foreign "mdb_strerror" (int @-> returning string)
 
@@ -121,13 +129,15 @@ end
 
 module Error = struct
   open Concepts.Condition
+  let closed_transaction =
+    condition "closed-transaction" "The transaction has already ended" empty
 
   let lmdb_error code =
     condition "lmdb-error" (C.mdb_strerror code) ("code" |=| Concepts.Value.Integer code)
 end
 
 type connection = {env: C.mdb_env_ptr; dbi: C.mdb_dbi}
-type transaction = {tx: C.mdb_txn_ptr; dbi: C.mdb_dbi}
+type transaction = {tx: C.mdb_txn_ptr; dbi: C.mdb_dbi; mutable active: bool}
 
 type address = Label of string | Hash of Concepts.Hash.hash
 
@@ -159,11 +169,22 @@ let connect (c : Concepts.Configuration.term) =
 
 let start ({env; dbi} : connection) =
   C.mdb_txn_begin' env C.null_txn Unsigned.UInt.zero
-  |> Result.map (fun tx -> {tx; dbi})
+  |> Result.map (fun tx -> {tx; dbi; active = true;})
   |> Result.map_error Error.lmdb_error
 
-let commit ({tx; _} : transaction) = C.mdb_txn_commit tx |> Result.map_error Error.lmdb_error
-let abort ({tx; _} : transaction) = C.mdb_txn_abort tx |> Result.map_error Error.lmdb_error
+let commit transaction =
+  if not transaction.active then Error Error.closed_transaction
+  else begin
+    transaction.active <- false;
+    C.mdb_txn_commit transaction.tx |> Result.map_error Error.lmdb_error
+  end
+
+let abort transaction =
+  if transaction.active then begin
+    transaction.active <- false;
+    C.mdb_txn_abort transaction.tx
+  end;
+  Ok ()
 
 (*
  * FIXME: `blob_of_bytes` and `bytes_of_blob` should not exist.
@@ -176,7 +197,8 @@ let bytes_of_address = function
   | Label s -> String.to_bytes s
   | Hash h -> Concepts.Hash.bytes_of_hash h
 
-let get ({tx; dbi} : transaction) (addr : address) =
+let get ({tx; dbi; active} : transaction) (addr : address) =
+  if not active then Error Error.closed_transaction else
   begin match C.mdb_get' tx dbi (bytes_of_address addr) with
   | Ok x -> Ok (Some (Concepts.Blob.blob_of_bytes x))
   | Error e when e = C.Errors.mdb_notfound -> Ok None
@@ -184,7 +206,8 @@ let get ({tx; dbi} : transaction) (addr : address) =
   end
   |> Result.map_error Error.lmdb_error
 
-let put ({tx; dbi} : transaction) (addr : address) (b : Concepts.Blob.t) =
+let put ({tx; dbi; active} : transaction) (addr : address) (b : Concepts.Blob.t) =
+  if not active then Error Error.closed_transaction else
   C.mdb_put' tx dbi (bytes_of_address addr)
     (Concepts.Blob.bytes_of_blob b)
     Unsigned.UInt.zero
