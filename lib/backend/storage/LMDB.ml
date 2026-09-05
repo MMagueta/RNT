@@ -66,7 +66,7 @@ module C = struct
     with_output_pointer (ptr mdb_txn) (from_voidp mdb_txn null) (mdb_txn_begin env parent flags)
 
   let mdb_txn_commit = foreign "mdb_txn_commit" (ptr mdb_txn @-> returning mdb_result)
-  let mdb_txn_abort = foreign "mdb_txn_abort" (ptr mdb_txn @-> returning mdb_result)
+  let mdb_txn_abort = foreign "mdb_txn_abort" (ptr mdb_txn @-> returning void)
 
   (* TODO: make it so that we do not need to copy bytes to a separate array *)
   let carray_of_bytes (b : bytes) =
@@ -129,13 +129,15 @@ end
 
 module Error = struct
   open Concepts.Condition
+  let closed_transaction =
+    condition "closed-transaction" "The transaction has already ended" empty
 
   let lmdb_error code =
     condition "lmdb-error" (C.mdb_strerror code) ("code" |=| Concepts.Value.Integer code)
 end
 
 type connection = {env: C.mdb_env_ptr; dbi: C.mdb_dbi}
-type transaction = {tx: C.mdb_txn_ptr; dbi: C.mdb_dbi}
+type transaction = {tx: C.mdb_txn_ptr; dbi: C.mdb_dbi; mutable active: bool}
 
 type address = Label of string | Hash of Concepts.Hash.hash
 
@@ -167,11 +169,22 @@ let connect (c : Concepts.Configuration.term) =
 
 let start ({env; dbi} : connection) =
   C.mdb_txn_begin' env C.null_txn Unsigned.UInt.zero
-  |> Result.map (fun tx -> {tx; dbi})
+  |> Result.map (fun tx -> {tx; dbi; active = true;})
   |> Result.map_error Error.lmdb_error
 
-let commit ({tx; _} : transaction) = C.mdb_txn_commit tx |> Result.map_error Error.lmdb_error
-let abort ({tx; _} : transaction) = C.mdb_txn_abort tx |> Result.map_error Error.lmdb_error
+let commit transaction =
+  if not transaction.active then Error Error.closed_transaction
+  else begin
+    transaction.active <- false;
+    C.mdb_txn_commit transaction.tx |> Result.map_error Error.lmdb_error
+  end
+
+let abort transaction =
+  if transaction.active then begin
+    transaction.active <- false;
+    C.mdb_txn_abort transaction.tx
+  end;
+  Ok ()
 
 (*
  * FIXME: `blob_of_bytes` and `bytes_of_blob` should not exist.
@@ -184,7 +197,8 @@ let bytes_of_address = function
   | Label s -> String.to_bytes s
   | Hash h -> Concepts.Hash.bytes_of_hash h
 
-let get ({tx; dbi} : transaction) (addr : address) =
+let get ({tx; dbi; active} : transaction) (addr : address) =
+  if not active then Error Error.closed_transaction else
   begin match C.mdb_get' tx dbi (bytes_of_address addr) with
   | Ok x -> Ok (Some (Concepts.Blob.blob_of_bytes x))
   | Error e when e = C.Errors.mdb_notfound -> Ok None
@@ -192,7 +206,8 @@ let get ({tx; dbi} : transaction) (addr : address) =
   end
   |> Result.map_error Error.lmdb_error
 
-let put ({tx; dbi} : transaction) (addr : address) (b : Concepts.Blob.t) =
+let put ({tx; dbi; active} : transaction) (addr : address) (b : Concepts.Blob.t) =
+  if not active then Error Error.closed_transaction else
   C.mdb_put' tx dbi (bytes_of_address addr)
     (Concepts.Blob.bytes_of_blob b)
     Unsigned.UInt.zero
