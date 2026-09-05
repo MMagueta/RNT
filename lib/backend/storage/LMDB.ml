@@ -87,7 +87,8 @@ module C = struct
     (* MDB_val contains a raw pointer, but that pointer doees not keep
        the OCaml array alive through GC. Returning only the structure
        point could allow collection of the buffer before LMDB is done
-       with it. *)
+       with it. The Sys.opaque_identity hides it from OCaml's
+       optimizations. *)
     Fun.protect ~finally:(fun () -> ignore (Sys.opaque_identity buf))
       (fun () -> body (addr s))
 
