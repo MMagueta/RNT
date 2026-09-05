@@ -79,12 +79,17 @@ module C = struct
     CArray.iteri (Bytes.set buffer) arr;
     buffer
 
-  let mdb_val_ptr_of_bytes (b : bytes) =
+  let with_mdb_val (b : bytes) body =
     let buf = carray_of_bytes b in
     let s = make mdb_val in
     setf s mv_size (Unsigned.Size_t.of_int (Bytes.length b));
     setf s mv_data (to_voidp (CArray.start buf));
-    addr s
+    (* MDB_val contains a raw pointer, but that pointer doees not keep
+       the OCaml array alive through GC. Returning only the structure
+       point could allow collection of the buffer before LMDB is done
+       with it. *)
+    Fun.protect ~finally:(fun () -> ignore (Sys.opaque_identity buf))
+      (fun () -> body (addr s))
 
   let bytes_of_mdb_val (s : mdb_val structure) =
     let buf =
@@ -97,7 +102,8 @@ module C = struct
       (ptr mdb_txn @-> mdb_dbi @-> ptr mdb_val @-> ptr mdb_val @-> returning mdb_result)
 
   let mdb_get' txn dbi key =
-    with_output_pointer mdb_val (make mdb_val) (mdb_get txn dbi (mdb_val_ptr_of_bytes key))
+    with_mdb_val key (fun key ->
+        with_output_pointer mdb_val (make mdb_val) (mdb_get txn dbi key))
     |> Result.map bytes_of_mdb_val
 
   let mdb_put =
@@ -105,7 +111,8 @@ module C = struct
       (ptr mdb_txn @-> mdb_dbi @-> ptr mdb_val @-> ptr mdb_val @-> uint @-> returning mdb_result)
 
   let mdb_put' txn dbi key data flags =
-    mdb_put txn dbi (mdb_val_ptr_of_bytes key) (mdb_val_ptr_of_bytes data) flags
+    with_mdb_val key (fun key ->
+        with_mdb_val data (fun data -> mdb_put txn dbi key data flags))
 
   let mdb_strerror = foreign "mdb_strerror" (int @-> returning string)
 
