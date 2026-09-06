@@ -235,6 +235,15 @@ module Value = struct
     |> fmap (function
              | None -> Ok None
              | Some v -> f v |> Result.map Option.some)
+
+  let bencode_of_value = function
+    | Value.String s -> Bencode.Tagged ('s', Bencode.String s)
+    | Value.Integer n -> Bencode.Tagged ('i', Bencode.Int n)
+
+  let value_of_bencode = function
+    | Bencode.Tagged ('s', Bencode.String s) -> Ok (Value.String s)
+    | Bencode.Tagged ('i', Bencode.Int n) -> Ok (Value.Integer n)
+    | _ -> Error (Error.type_mismatch ~expected:"value")
 end
 
 module Field = struct
