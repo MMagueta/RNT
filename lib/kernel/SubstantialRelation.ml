@@ -1,5 +1,6 @@
 module Make (S : Abstract.Storage.STORAGE) = struct
   module SI = Storage.Make (S)
+  module KT = Tuple.Make (S)
 
   module Error = struct
     open Concepts.Condition
@@ -99,7 +100,7 @@ module Make (S : Abstract.Storage.STORAGE) = struct
 
   let contains_tuple tx relation tuple =
     let open Utilities.Result in
-    let tuple = Concepts.Hash.hash_of_blob tuple in
+    let tuple = KT.address_of tuple in
     let* node = tuple_node tx relation in
     let* present = TupleSet.lookup tx tuple node in
     Ok (Option.is_some present)
@@ -140,7 +141,7 @@ module Make (S : Abstract.Storage.STORAGE) = struct
 
   let assert_tuple tx relation tuple =
     let open Utilities.Result in
-    let* tuple = SI.store_blob tx tuple in
+    let* tuple = KT.store tx tuple in
     let* node = tuple_node tx relation in
     let* node = TupleSet.insert tx tuple tuple node in
     Ok {relation with tuples= TupleSet.hash_of node}

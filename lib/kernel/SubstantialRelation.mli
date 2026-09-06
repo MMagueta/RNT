@@ -36,9 +36,11 @@ module Make (S : Abstract.Storage.STORAGE) : sig
   val indexes : t -> Concepts.Hash.hash option
   val hash : t -> Concepts.Hash.hash
 
+  (** Add a tuple to the relation, sharing any values already stored. *)
   val assert_tuple :
-    S.transaction -> t -> Concepts.Blob.t -> (t, Concepts.Condition.condition) result
+    S.transaction -> t -> Concepts.Tuple.t -> (t, Concepts.Condition.condition) result
 
+  (** Check membership using the tuple's address, without writing to storage. *)
   val contains_tuple :
-    S.transaction -> t -> Concepts.Blob.t -> (bool, Concepts.Condition.condition) result
+    S.transaction -> t -> Concepts.Tuple.t -> (bool, Concepts.Condition.condition) result
 end
