@@ -34,6 +34,35 @@ module Make (S : Abstract.Storage.STORAGE) (C : Helpers.Storage.CONFIGURATOR) = 
     check (option string) "that in-memory reads from a value replacement work properly" (Some "toodles") v3';
     check (option string) "that in-memory reads from a non-existent key returns nothing" None bogus
 
+  let batching conn =
+    let intermediate, final =
+      begin
+        let open Utilities.Result in
+        let* tx = S.start conn in
+        let intermediate = ref None in
+        let* final = T.with_batch tx (fun () ->
+                         let* i = T.empty |> T.insert tx "tree" "maple" in
+                         intermediate := Some (T.hash_of i);
+                         T.insert tx "tree" "spruce" i) in
+        let* () = S.commit tx in
+        Ok (Option.get !intermediate, T.hash_of final)
+      end
+      |> Helpers.condition_as_failure
+    in
+    let i_node, f_node =
+      begin
+        let open Utilities.Result in
+        let* tx = S.start conn in
+        let* intermediate = T.find tx intermediate in
+        let* final = T.find tx final in
+        Ok (intermediate, final)
+      end
+      |> Helpers.condition_as_failure
+    in
+    check bool "that the intermediate node does not get persisted" true (Option.is_none i_node);
+    check bool "that the final node does get persisted" true (Option.is_some f_node)
+
+
   let persistence conn =
     let addr =
       begin
@@ -92,6 +121,7 @@ module Make (S : Abstract.Storage.STORAGE) (C : Helpers.Storage.CONFIGURATOR) = 
   let suite prefix =
     ( "merkle/" ^ prefix,
       [test_case "insert-and-lookup" `Quick (H.with_connection insert_and_lookup "merkle-test");
+       test_case "batching" `Quick (H.with_connection batching "merkle-test");
        test_case "persistence" `Quick (H.with_connection persistence "merkle-test");
        test_case "iteration" `Quick (H.with_connection iteration "merkle-test")])
 end
