@@ -77,7 +77,11 @@ module Make : TREE = functor (S : Abstract.Storage.STORAGE) (K : KEY) -> struct
                        |> Result.map String.to_bytes
                        |> Result.map Concepts.Blob.blob_of_bytes
                        |> fmap K.decode in
-    let decode_value t = as_string t |> Result.map Concepts.Hash.of_raw_string in
+    let decode_value value =
+      let* raw = as_string value in
+      if String.length raw = Concepts.Hash.size then Ok (Concepts.Hash.of_raw_string raw)
+      else Error (Error.malformed_node ()) in
+      
     let decode_list f data = data
                              |> fmap as_list
                              |> Result.map (List.map f)
@@ -87,11 +91,15 @@ module Make : TREE = functor (S : Abstract.Storage.STORAGE) (K : KEY) -> struct
     | Tagged ('!', (Dict _ as data)) ->
        let* keys = field "keys" data |> decode_list decode_key in
        let* values = field "values" data |> decode_list decode_value in
-       Ok (Leaf { keys; values })
+       if BatFingerTree.size keys <> BatFingerTree.size values then
+         Error (Error.malformed_node ())
+       else Ok (Leaf { keys; values })
     | Tagged ('#', (Dict _ as data)) ->
        let* keys = field "keys" data |> decode_list decode_key in
        let* children = field "children" data |> decode_list decode_value in
-       Ok (Trunk { keys; children })
+       if BatFingerTree.size children <> BatFingerTree.size keys + 1 then
+         Error (Error.malformed_node ())
+       else Ok (Trunk { keys; children })
     | _ -> Error (Error.malformed_node ())
 
   let from_blob blob = Concepts.Encoding.Bencode.of_blob blob
@@ -135,7 +143,7 @@ module Make : TREE = functor (S : Abstract.Storage.STORAGE) (K : KEY) -> struct
     let* child = find tx addr in
     match child with
     | Some child -> Ok child
-    | None -> failwith "A child node was not found on the underlying storage. Either your database is corrupted, or this is a bug on RNT!"
+    | None -> Error Concepts.Condition.(condition "missing-node" "A Merkle child is missing from storage" empty)
 
   let rec lookup tx key node =
     let open Utilities.Result in
