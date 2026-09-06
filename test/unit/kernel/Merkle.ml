@@ -86,6 +86,7 @@ module Make (S : Abstract.Storage.STORAGE) (C : Helpers.Storage.CONFIGURATOR) = 
         let* v1 = T.lookup tx "k1" node in
         let* v2 = T.lookup tx "k2" node in
         let* v3 = T.lookup tx "k3" node in
+        let* () = S.abort tx in
         Ok (v1, v2, v3)
       end
       |> Helpers.condition_as_failure
