@@ -16,6 +16,7 @@ module Make (S : Abstract.Storage.STORAGE) (C : Helpers.Storage.CONFIGURATOR) = 
         let* v = S.get tx (S.Hash key) in
         let* () = S.put tx (S.Hash key) blob in
         let* v' = S.get tx (S.Hash key) in
+        let* () = S.abort tx in
         Ok Concepts.Encoding.(Option.map value_of_blob v, Option.map value_of_blob v')
       end
       |> Helpers.condition_as_failure
