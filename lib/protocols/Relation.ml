@@ -3,7 +3,7 @@ class type implementation = object
   method predicate : (Concepts.Hash.hash option, Concepts.Condition.condition) result
   method local_constraints : (Concepts.Hash.hash option, Concepts.Condition.condition) result
   method tuples : (Concepts.Hash.hash, Concepts.Condition.condition) result
-  method contains : Concepts.Blob.t -> (bool, Concepts.Condition.condition) result
+  method contains : Concepts.Tuple.t -> (bool, Concepts.Condition.condition) result
 end
 
 type Handle.protocol += Relation of implementation
