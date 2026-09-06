@@ -39,10 +39,22 @@ constitute admissible members of the relation. Constraints involving
 multiple relations place an individual relation within the wider
 semantics of its multigroup.
 
-Schematics therefore describes more than the shape of a relation. It
-records the information necessary to understand the logical conditions
-under which a relation value is a semantically consistent
-representation of its intended group.
+Schematics therefore describes more than the shape of a relation,
+recording the information necessary to understand the logical
+conditions under which a relation value is a semantically consistent
+representation of its intended group. Its schema component is exposed
+through =Protocols.Schematics.Make(Schema)=, instantiated by the host
+with a logical schema implementation satisfying
+=Abstract.Schematics.SCHEMA=. Providers and consumers use the shared
+protocol module to obtain a schema and list its attributes through an
+object handle.
+
+For now, types are only opaque tags carried by attributes, and schema
+operations preserve this metadata without resolving tags, comparing
+types, or checking values against domains. Structural checks, such as
+rejecting unknown projection attributes, remain valid
+however. Membership criteria, their evaluation, and constraint
+derivation are not also implemented.
 
 * Namespace
 A namespace is a component of RNT's hierarchical object/name space. It
