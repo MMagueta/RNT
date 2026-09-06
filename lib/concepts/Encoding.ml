@@ -38,6 +38,9 @@ let value_of_blob (b : Blob.t) =
     condition "codec-malformed-integer" "A byte run is not a valid integer"
       ("digits" |=| Value.String digits)
 
+  let malformed_hash =
+    condition "malformed-hash" "An encoded hash has the wrong size" empty
+  
   let unexpected_byte c =
     condition "codec-unexpected-byte" "Unexpected byte while decoding"
       ("byte" |=| Value.String (String.make 1 c))
@@ -217,7 +220,9 @@ module Value = struct
     let open Utilities.Result in
     Bencode.with_tag 'h' value
     |> fmap Bencode.as_string
-    |> Result.map Hash.of_raw_string
+    |> fmap (fun raw ->
+           if String.length raw = Hash.size then Ok (Hash.of_raw_string raw)
+           else Error Error.malformed_hash)
 
   let bencode_of_option f option = Bencode.Tagged ('?', Option.map f option
                                                         |> Option.to_list
