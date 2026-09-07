@@ -16,14 +16,15 @@ module type TREE = functor (S : Abstract.Storage.STORAGE) (K : KEY) -> sig
 
   type node
 
+  val with_batch: S.transaction -> (unit -> (node, Concepts.Condition.condition) result) -> (node, Concepts.Condition.condition) result
+
   val find : S.transaction -> address -> (node option, Concepts.Condition.condition) result
+  val persist : S.transaction -> node -> (address, Concepts.Condition.condition) result
 
   val empty : node
   val empty_under : S.transaction -> (address, Concepts.Condition.condition) result
 
   val hash_of : node -> address
-
-  val persist : S.transaction -> node -> (address, Concepts.Condition.condition) result
 
   val insert : S.transaction -> K.t -> address -> node -> (node, Concepts.Condition.condition) result
   val remove : S.transaction -> K.t -> node -> (node, Concepts.Condition.condition) result
@@ -121,14 +122,57 @@ module Make : TREE = functor (S : Abstract.Storage.STORAGE) (K : KEY) -> struct
      be used for intermediates and the like. *)
   let hash_of node = to_blob node |> Concepts.Hash.hash_of_blob
 
-  let find tx node =
+  type _ Effect.t += Intern: (address * node * Concepts.Blob.t) -> unit Effect.t | Retrieve: address -> (node * Concepts.Blob.t) option Effect.t
+
+  let rec flush tx buffer addr =
     let open Utilities.Result in
-    let* data = S.get tx (S.Hash node) in
-    match data with
-    | None -> Ok None
-    | Some data ->
-       let* node = from_blob data in
-       Ok (Some node)
+    match BatMap.find_opt addr buffer with
+    | None -> Ok ()
+    | Some (node, data) ->
+       let* _ = S.put tx (S.Hash addr) data in
+       match node with
+       | Leaf _ -> Ok ()
+       | Trunk { children; _ } ->
+          BatFingerTree.map (fun addr -> flush tx buffer addr) children
+          |> Utilities.FingerTree.sequence
+          |> Result.map ignore
+
+  let with_batch tx f =
+    let open Utilities.Result in
+    let buffer = ref BatMap.empty in
+    try
+      let* node = f () in
+      let* _ = flush tx !buffer (hash_of node) in
+      Ok node
+    with
+    | effect (Intern (addr, node, data)), k ->
+       buffer := BatMap.add addr (node, data) !buffer;
+       Effect.Deep.continue k ()
+    | effect (Retrieve addr), k ->
+       Effect.Deep.continue k (BatMap.find_opt addr !buffer)
+
+  let find tx addr =
+    let open Utilities.Result in
+    try Effect.perform (Retrieve addr) |> Option.map fst |> Result.ok
+    with
+    | Effect.Unhandled _ ->
+       let* data = S.get tx (S.Hash addr) in
+       match data with
+       | None -> Ok None
+       | Some data ->
+          let* node = from_blob data in
+          Ok (Some node)
+
+  let persist tx node =
+    let data = to_blob node in
+    let addr = Concepts.Hash.hash_of_blob data in
+    begin
+      try Ok (Effect.perform (Intern (addr, node, data)))
+      with
+      | Effect.Unhandled _ ->
+         S.put tx (S.Hash addr) data
+    end
+    |> Result.map (fun () -> addr)
 
   let find' tx addr =
     let open Utilities.Result in
@@ -146,13 +190,6 @@ module Make : TREE = functor (S : Abstract.Storage.STORAGE) (K : KEY) -> struct
     | Trunk { children; _ } ->
        let* child = BatFingerTree.get children (if found then i+1 else i) |> find' tx in
        lookup tx key child
-
-  let persist tx node =
-    let open Utilities.Result in
-    let data = to_blob node in
-    let addr = Concepts.Hash.hash_of_blob data in
-    let* () = S.put tx (S.Hash addr) data in
-    Ok addr
 
   let empty_under tx = persist tx empty
 
@@ -311,6 +348,8 @@ module type INTERFACE = functor (S : Abstract.Storage.STORAGE) (K : KEY) (V : VA
   type address = Concepts.Hash.hash
   type node
 
+  val with_batch: S.transaction -> (unit -> (node, Concepts.Condition.condition) result) -> (node, Concepts.Condition.condition) result
+
   val find : S.transaction -> address -> (node option, Concepts.Condition.condition) result
 
   val empty : node
@@ -359,6 +398,7 @@ module Interface : INTERFACE = functor (S : Abstract.Storage.STORAGE) (K : KEY) 
   let empty = T.empty
   let empty_under = T.empty_under
   let hash_of = T.hash_of
+  let with_batch = T.with_batch
 
   let insert tx k v node =
     let* addr = intern tx v in

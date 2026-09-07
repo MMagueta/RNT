@@ -1,5 +1,6 @@
 let all_suites =
   Unit.Backend.Storage.suites ()
+  @ Unit.Kernel.Merkle.suites ()
   @ Unit.Kernel.SubstantialRelation.suites ()
   @ Integration.Registration.suites ()
 
