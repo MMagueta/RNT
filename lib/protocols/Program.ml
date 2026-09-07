@@ -1,5 +1,5 @@
 class type implementation = object
-  method entry_points : string list
+  method entry_points : string BatFingerTree.t
 
   method invoke :
     entry:string ->

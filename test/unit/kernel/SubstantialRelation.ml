@@ -7,7 +7,8 @@ module Make (S : Abstract.Storage.STORAGE) (C : Helpers.Storage.CONFIGURATOR) = 
   module KT = Rnt.Kernel.Tuple.Make (S)
 
   let hash s = Concepts.Blob.blob_of_bytes (Bytes.of_string s) |> Concepts.Hash.hash_of_blob
-  let tuple pairs = Concepts.Tuple.of_list pairs |> Helpers.condition_as_failure
+  let tuple pairs =
+    BatFingerTree.of_list pairs |> Concepts.Tuple.of_bindings |> Helpers.condition_as_failure
   let text s = Concepts.Value.String s
   let alaric = tuple ["name", text "Alaric"; "city", text "Braga"]
   let brennus = tuple ["name", text "Brennus"; "city", text "Braga"]

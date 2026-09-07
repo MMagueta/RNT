@@ -6,13 +6,13 @@ type t
 val empty : t
 
 (** Build a tuple from named values. Duplicate names return an error. *)
-val of_list : (string * Value.value) list -> (t, Condition.condition) result
+val of_bindings : (string * Value.value) BatFingerTree.t -> (t, Condition.condition) result
 
 (** Attribute names and values, sorted by name. *)
-val to_list : t -> (string * Value.value) list
+val bindings : t -> (string * Value.value) BatFingerTree.t
 
 (** Attribute names in sorted order. *)
-val names : t -> string list
+val names : t -> string BatFingerTree.t
 
 val find : t -> string -> Value.value option
 val mem : t -> string -> bool

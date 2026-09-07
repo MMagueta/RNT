@@ -17,7 +17,8 @@ module Make (S : Abstract.Storage.STORAGE) : sig
   val load : S.transaction -> address -> (Concepts.Tuple.t, Concepts.Condition.condition) result
 
   (** List attribute names in sorted order without loading their values. *)
-  val names : S.transaction -> address -> (string list, Concepts.Condition.condition) result
+  val names :
+    S.transaction -> address -> (string BatFingerTree.t, Concepts.Condition.condition) result
 
   (** Read one attribute, returning [None] if its name is absent.
       Missing or malformed stored data returns an error. *)

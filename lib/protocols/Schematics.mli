@@ -16,5 +16,6 @@ module Make (Schema : Abstract.Schematics.SCHEMA) : sig
   (** List the attributes of the supplied schema, without a second
       metadata representation or any relation enumeration. *)
   val attributes :
-    t Handle.interface -> ((string * Schema.attribute) list, Concepts.Condition.condition) result
+    t Handle.interface ->
+    ((string * Schema.attribute) BatFingerTree.t, Concepts.Condition.condition) result
 end
