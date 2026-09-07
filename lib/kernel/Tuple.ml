@@ -26,17 +26,13 @@ module Make (S : Abstract.Storage.STORAGE) = struct
     Concepts.Tuple.to_list tuple
     |> List.map (fun (name, value) -> name, encode value |> Concepts.Hash.hash_of_blob)
 
-  (* Insert in name order. Splits depend on the sequence of insertions,
-     so this is what keeps a tuple's tree, and hence its address, from
-     depending on the order its attributes were given in. *)
   let tree tx bindings =
     let open Utilities.Result in
-    List.stable_sort (fun (l, _) (r, _) -> String.compare l r) bindings
-    |> List.fold_left
-         (fun node (name, address) ->
-           let* node = node in
-           Attributes.insert tx name address node )
-         (Ok Attributes.empty)
+    List.fold_left
+      (fun node (name, address) ->
+        let* node = node in
+        Attributes.insert tx name address node )
+      (Ok Attributes.empty) bindings
 
   (* A batch persists only what the node it is handed reaches, so returning
      the empty tree leaves the one we just built entirely in memory. *)
