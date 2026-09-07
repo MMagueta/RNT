@@ -50,9 +50,9 @@ protocol module to obtain a schema and list its attributes through an
 object handle.
 
 For now, types are only opaque tags carried by attributes, and schema
-operations preserve this metadata without resolving tags, comparing
-types, or checking values against domains. Structural checks, such as
-rejecting unknown projection attributes, remain valid
+operations preserve this metadata without trying to resolve these
+tags, comparing types, or checking values against domains. Structural
+checks, such as rejecting unknown projection attributes, remain valid
 however. Membership criteria, their evaluation, and constraint
 derivation are not also implemented.
 
