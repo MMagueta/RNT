@@ -51,13 +51,15 @@ module Make (S : Abstract.Storage.STORAGE) (C : Helpers.Storage.CONFIGURATOR) = 
       let* tx = S.start conn in
       let* relation = SR.empty tx ~heading:(hash "heading") () in
       let* relation = SR.assert_tuple tx relation alaric in
-      let* loaded = KT.load tx (KT.address_of alaric) in
+      let* alaric_address = KT.address_of tx alaric in
+      let* loaded = KT.load tx alaric_address in
       check bool "the asserted tuple reads back" true (Concepts.Tuple.equal alaric loaded);
-      let* city = KT.attribute tx (KT.address_of alaric) "city" in
+      let* city = KT.attribute tx alaric_address "city" in
       check (option Helpers.value) "one attribute at a time" (Some (text "Braga")) city;
       let* relation = SR.assert_tuple tx relation brennus in
-      let* one = KT.attribute_address tx (KT.address_of alaric) "city" in
-      let* other = KT.attribute_address tx (KT.address_of brennus) "city" in
+      let* brennus_address = KT.address_of tx brennus in
+      let* one = KT.attribute_address tx alaric_address "city" in
+      let* other = KT.attribute_address tx brennus_address "city" in
       check bool "asserted tuples share the values they agree on" true
         (Option.equal Concepts.Hash.hash_equals one other);
       let* both = SR.contains_tuple tx relation brennus in

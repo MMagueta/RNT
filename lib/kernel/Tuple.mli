@@ -4,9 +4,10 @@ module Make (S : Abstract.Storage.STORAGE) : sig
   (** The address of a tuple's tree root. *)
   type address = Concepts.Hash.hash
 
-  (** Compute a tuple's address without storage access.
+  (** Compute a tuple's address without storing anything.
       Equal tuples have the same address, regardless of attribute order. *)
-  val address_of : Concepts.Tuple.t -> address
+  val address_of :
+    S.transaction -> Concepts.Tuple.t -> (address, Concepts.Condition.condition) result
 
   (** Store a tuple and return its address, matching [address_of].
       Values already stored are shared. *)
@@ -32,9 +33,4 @@ module Make (S : Abstract.Storage.STORAGE) : sig
     address ->
     string ->
     (Concepts.Hash.hash option, Concepts.Condition.condition) result
-
-  (** Store a tuple containing only the selected attributes, reusing their values.
-      Unknown or duplicate names return an error. An empty list gives the empty tuple. *)
-  val project :
-    S.transaction -> address -> string list -> (address, Concepts.Condition.condition) result
 end

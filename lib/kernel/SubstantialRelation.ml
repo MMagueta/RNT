@@ -100,7 +100,7 @@ module Make (S : Abstract.Storage.STORAGE) = struct
 
   let contains_tuple tx relation tuple =
     let open Utilities.Result in
-    let tuple = KT.address_of tuple in
+    let* tuple = KT.address_of tx tuple in
     let* node = tuple_node tx relation in
     let* present = TupleSet.lookup tx tuple node in
     Ok (Option.is_some present)

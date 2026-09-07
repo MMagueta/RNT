@@ -10,14 +10,6 @@ module Make (S : Abstract.Storage.STORAGE) = struct
         "The attribute tree of a tuple is missing from the backend. Either your storage is \
          corrupted, or this is a bug in RNT!"
         ("hash" |=| Concepts.Value.String (Concepts.Hash.to_hum_string root))
-
-    let unknown_attribute name =
-      condition "unknown-attribute" "A tuple has no such attribute"
-        ("attribute" |=| Concepts.Value.String name)
-
-    let duplicate_attribute name =
-      condition "duplicate-attribute" "An attribute name occurs more than once in a tuple"
-        ("attribute" |=| Concepts.Value.String name)
   end
 
   type address = Concepts.Hash.hash
@@ -30,21 +22,42 @@ module Make (S : Abstract.Storage.STORAGE) = struct
     let open Utilities.Result in
     Concepts.Encoding.Bencode.of_blob blob |> fmap Concepts.Encoding.Value.value_of_bencode
 
-  (* Build in memory so a tuple's address is available before it is stored. *)
-  let tree bindings = Attributes.build bindings
-
   let bindings_of tuple =
     Concepts.Tuple.to_list tuple
     |> List.map (fun (name, value) -> name, encode value |> Concepts.Hash.hash_of_blob)
 
-  let address_of tuple = bindings_of tuple |> tree |> fst |> Attributes.hash_of
-
-  let persist tx (root, nodes) =
+  (* Insert in name order. Splits depend on the sequence of insertions,
+     so this is what keeps a tuple's tree, and hence its address, from
+     depending on the order its attributes were given in. *)
+  let tree tx bindings =
     let open Utilities.Result in
-    let* () =
-      List.map (Attributes.persist tx) nodes |> Utilities.List.sequence |> Result.map ignore
+    List.stable_sort (fun (l, _) (r, _) -> String.compare l r) bindings
+    |> List.fold_left
+         (fun node (name, address) ->
+           let* node = node in
+           Attributes.insert tx name address node )
+         (Ok Attributes.empty)
+
+  (* A batch persists only what the node it is handed reaches, so returning
+     the empty tree leaves the one we just built entirely in memory. *)
+  let address_of tx tuple =
+    let open Utilities.Result in
+    let root = ref Attributes.empty in
+    let* _ =
+      Attributes.with_batch tx (fun () ->
+          let* node = tree tx (bindings_of tuple) in
+          root := node;
+          Ok Attributes.empty )
     in
-    Ok (Attributes.hash_of root)
+    Ok (Attributes.hash_of !root)
+
+  (* Intermediate nodes stay in the batch. The root is persisted here
+     because a batch makes no promise about a tree that reaches nothing:
+     the empty tuple would otherwise be addressed but never stored. *)
+  let persist tx bindings =
+    let open Utilities.Result in
+    let* root = Attributes.with_batch tx (fun () -> tree tx bindings) in
+    Attributes.persist tx root
 
   let node tx root =
     let open Utilities.Result in
@@ -64,7 +77,7 @@ module Make (S : Abstract.Storage.STORAGE) = struct
       |> Utilities.List.sequence
       |> Result.map ignore
     in
-    persist tx (bindings_of tuple |> tree)
+    persist tx (bindings_of tuple)
 
   let load tx root =
     let open Utilities.Result in
@@ -100,21 +113,4 @@ module Make (S : Abstract.Storage.STORAGE) = struct
     | Some address ->
         let* value = value_at tx address in
         Ok (Some value)
-
-  (* Reuse value addresses: only the projected tree needs to be stored. *)
-  let project tx root names =
-    let open Utilities.Result in
-    let* source = node tx root in
-    let* bindings =
-      List.fold_left
-        (fun bindings name ->
-          let* bindings = bindings in
-          if List.mem_assoc name bindings then Error (Error.duplicate_attribute name)
-          else
-            let* address = Attributes.lookup tx name source in
-            let* address = Option.to_result ~none:(Error.unknown_attribute name) address in
-            Ok ((name, address) :: bindings) )
-        (Ok []) names
-    in
-    persist tx (tree (List.rev bindings))
 end

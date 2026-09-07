@@ -32,10 +32,6 @@ module type TREE = functor (S : Abstract.Storage.STORAGE) (K : KEY) -> sig
 
   val fold_left : S.transaction -> ('c -> K.t -> address -> 'c) -> 'c -> node -> ('c, Concepts.Condition.condition) result
   val keys : S.transaction -> node -> (K.t BatFingerTree.t, Concepts.Condition.condition) result
-
-  (* Build a tree without storage access. Return its root and all nodes
-     needed to persist it. *)
-  val build : (K.t * address) list -> node * node list
 end
 
 module Make : TREE = functor (S : Abstract.Storage.STORAGE) (K : KEY) -> struct
@@ -289,63 +285,6 @@ module Make : TREE = functor (S : Abstract.Storage.STORAGE) (K : KEY) -> struct
            loop left' tail
     in
     loop BatFingerTree.empty keys
-
-  (* Bulk builds avoid the keyless nodes that [insert] can create, so
-     the two paths can produce different tree shapes and roots.
-     Tuple trees use only [build]; relation tuple sets use only [insert].
-     Do not mix them for the same tree. *)
-  let build bindings =
-    let compare_keys (l, _) (r, _) =
-      match K.compare l r with Utilities.Ordering.Equal -> 0 | Smaller -> -1 | Greater -> 1
-    in
-    let bindings = List.sort_uniq compare_keys bindings in
-    let leaves =
-      let rec loop keys values leaves = function
-        | [] -> List.rev (Leaf {keys; values} :: leaves)
-        | (key, value) :: rest ->
-           let keys' = BatFingerTree.snoc keys key in
-           if should_split (hash_of_keys keys') && BatFingerTree.size keys > 0 then
-             (* Start the next leaf with the key that caused the split. *)
-             loop (BatFingerTree.singleton key) (BatFingerTree.singleton value)
-               (Leaf {keys; values} :: leaves) rest
-           else
-             loop keys' (BatFingerTree.snoc values value) leaves rest
-      in
-      loop BatFingerTree.empty BatFingerTree.empty [] bindings
-    in
-    (* Use each leaf's first key as its separator so lookup reaches that leaf. *)
-    let separators nodes =
-      List.tl nodes |> List.map (fun node -> BatFingerTree.get (keys_of node) 0)
-    in
-    let rec ascend nodes separators built =
-      match nodes with
-      | [root] -> (root, built)
-      | first :: siblings ->
-         let rec group keys children trunks promoted siblings separators =
-           match siblings, separators with
-           | [], [] -> List.rev (Trunk {keys; children} :: trunks), List.rev promoted
-           | sibling :: siblings, separator :: separators ->
-              let keys' = BatFingerTree.snoc keys separator in
-              if should_split (hash_of_keys keys') && BatFingerTree.size keys > 0 then
-                (* Move the split key up to the parent. *)
-                group BatFingerTree.empty
-                  (BatFingerTree.singleton (hash_of sibling))
-                  (Trunk {keys; children} :: trunks)
-                  (separator :: promoted) siblings separators
-              else
-                group keys'
-                  (BatFingerTree.snoc children (hash_of sibling))
-                  trunks promoted siblings separators
-           | _, _ -> failwith "Merkle.build: a level has no separator per sibling. This is a bug in RNT!"
-         in
-         let trunks, promoted =
-           group BatFingerTree.empty (BatFingerTree.singleton (hash_of first)) [] [] siblings
-             separators
-         in
-         ascend trunks promoted (built @ trunks)
-      | [] -> failwith "Merkle.build: a level with no nodes. This is a bug in RNT!"
-    in
-    ascend leaves (separators leaves) leaves
 
   let commit_node tx node =
     let open Utilities.Result in
