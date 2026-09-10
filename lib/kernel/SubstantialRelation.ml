@@ -1,4 +1,7 @@
-module Make (S : Abstract.Storage.STORAGE) = struct
+module Make (S : Abstract.Storage.STORAGE) (Schematics : sig
+  include Protocols.Schematics.S
+  val of_blob : Concepts.Blob.t -> (Schema.t, Concepts.Condition.condition) result
+end) = struct
   module SI = Storage.Make (S)
 
   module Error = struct
@@ -107,6 +110,45 @@ module Make (S : Abstract.Storage.STORAGE) = struct
     let* present = TupleSet.lookup tx tuple node in
     Ok (Option.is_some present)
 
+  let heading_value tx relation =
+    let open Utilities.Result in
+    let* data = SI.get_req tx (S.Hash relation.heading) in
+    Schematics.of_blob data
+
+  let enumerate storage relation =
+    let open Utilities.Result in
+    let* tx = S.start storage in
+    let* node = tuple_node tx relation in
+    (* TODO: `TupleSet.keys` walks the whole Merkle structure eagerly,
+       before the first tuple is yielded. Fine for this sketch; a real
+       implementation should walk it lazily instead (its own small
+       generator, or an explicit stack over Merkle.node) so that
+       stacking e.g. `restrict` on a huge relation does not pay for the
+       entire scan before the first `next`. *)
+    let* keys = TupleSet.keys tx node in
+    let remaining = ref keys in
+    let closed = ref false in
+    let close () = if not !closed then begin closed := true; ignore (S.abort tx) end in
+    let produce ~yield =
+      let rec loop () =
+        match BatFingerTree.front !remaining with
+        | None ->
+           close ();
+           Ok ()
+        | Some (rest, addr) ->
+           remaining := rest;
+           match SI.get_req tx (S.Hash addr) |> fmap Concepts.Tuple.Representation.of_blob with
+           | Error _ as e ->
+              close ();
+              e
+           | Ok tuple ->
+              yield tuple;
+              loop ()
+      in
+      loop ()
+    in
+    Ok (Generator.cursor_of ~on_release:close produce)
+
   class relation storage value =
     object (self)
       inherit Lifecycle.null
@@ -115,12 +157,24 @@ module Make (S : Abstract.Storage.STORAGE) = struct
       method heading = Ok relation.heading
       method predicate = Ok relation.predicate
       method local_constraints = Ok relation.local_constraints
-      method tuples = Ok relation.tuples
 
-      method contains tuple =
-        SI.with_transaction storage (fun tx -> contains_tuple tx relation tuple)
+      (* The protocol takes a tuple, not bytes: encoding is this object's business, and a caller
+         that had to produce the exact stored bytes would have to know this encoding to do it. *)
+      method contains (tuple : Concepts.Tuple.t) =
+        SI.with_transaction storage (fun tx ->
+            contains_tuple tx relation (Concepts.Tuple.Representation.to_blob tuple) )
 
-      method protocols : Protocols.Handle.protocol list = Protocols.[Relation.make self]
+      method schema = SI.with_transaction storage (fun tx -> heading_value tx relation)
+
+      (* A substantial relation is finitely enumerable, so it carries [Enumerable] as well as
+         [Relation]. A procedural relation would carry only the latter, which is how an evaluator
+         discovers it cannot iterate one -- see [Protocols.Enumerable]. The context is accepted and
+         unused here: this enumeration reads through its own cursor-lifetime transaction and needs
+         no name resolution, but cancellation should eventually be checked between tuples. *)
+      method enumerate (_ : Protocols.Context.t) = enumerate storage relation
+
+      method protocols : Protocols.Handle.protocol list =
+        [Protocols.Relation.make self; Protocols.Enumerable.make self; Schematics.make self]
       method hash = hash relation
     end
 

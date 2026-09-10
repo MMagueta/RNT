@@ -1,4 +1,7 @@
-module Make (S : Abstract.Storage.STORAGE) : sig
+module Make (S : Abstract.Storage.STORAGE) (Schematics : sig
+  include Protocols.Schematics.S
+  val of_blob : Concepts.Blob.t -> (Schema.t, Concepts.Condition.condition) result
+end) : sig
   type t
 
   val encode : t -> Concepts.Blob.t
@@ -46,4 +49,16 @@ module Make (S : Abstract.Storage.STORAGE) : sig
 
   val contains_tuple :
     S.transaction -> t -> Concepts.Blob.t -> (bool, Concepts.Condition.condition) result
+
+  (** decodes the heading at [heading relation] -- the body of
+      [Schematics.schema] for this kind of relation. *)
+  val heading_value : S.transaction -> t -> (Schematics.Schema.t, Concepts.Condition.condition) result
+
+  (** a handle carrying [Protocols.Cursor] over every tuple currently
+      asserted, decoded via [Concepts.Tuple.Representation.of_blob] --
+      the body of [Protocols.Relation.enumerate] for this kind of
+      relation. Opens its own storage transaction, held for the
+      cursor's whole lifetime rather than just this call -- see
+      [Kernel.Generator] and docs/design/evaluator.md, "Shape". *)
+  val enumerate : S.connection -> t -> (Protocols.Handle.t, Concepts.Condition.condition) result
 end
