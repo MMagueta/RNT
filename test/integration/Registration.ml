@@ -19,8 +19,8 @@ module Make (S : Abstract.Storage.STORAGE) (C : Helpers.Storage.CONFIGURATOR) = 
     let registration =
       begin
         let* root = I.initialize conn in
-        let* root = Directory.from root |> Option.to_result ~none:(Error.not_found ()) in
-        let* bm = Directory.find root "branch" |> fmap (Option.to_result ~none:(Error.not_found ())) in
+        let* bm = Kernel.Path.(lookup root ("branch" @/ this))
+                  |> fmap (Option.to_result ~none:(Error.not_found ())) in
         let* bm = Registry.from bm |> Option.to_result ~none:(Error.not_found ()) in
         let* branch = B.make conn in
         Registry.update bm "master" None (Some branch)
@@ -29,8 +29,8 @@ module Make (S : Abstract.Storage.STORAGE) (C : Helpers.Storage.CONFIGURATOR) = 
     let presence =
       begin
         let* root = I.initialize conn in
-        let* root = Directory.from root |> Option.to_result ~none:(Error.not_found ()) in
-        let* bm = Directory.find root "branch" |> fmap (Option.to_result ~none:(Error.not_found ())) in
+        let* bm = Kernel.Path.(lookup root ("branch" @/ this))
+                  |> fmap (Option.to_result ~none:(Error.not_found ())) in
         let* bm = Directory.from bm |> Option.to_result ~none:(Error.not_found ()) in
         Directory.find bm "master" |> Result.map Option.is_some
       end

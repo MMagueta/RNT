@@ -5,6 +5,6 @@ module Directory : sig
 
   module OfTree (S : Abstract.Storage.STORAGE) (K : Merkle.KEY with type t = string) (V : Merkle.VALUE) : sig
     module Interface : module type of Merkle.Interface (S) (K) (V)
-    val make : storage:S.connection -> constructor:(V.t -> (Protocols.Handle.t, Concepts.Condition.condition) result) -> node:(Interface.node) -> Protocols.Handle.protocol
+    val make : storage:S.connection -> constructor:(V.t -> (Protocols.Handle.t, Concepts.Condition.condition) result) -> node:Interface.node -> Protocols.Handle.protocol
   end
 end
