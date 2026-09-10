@@ -1,5 +1,3 @@
-module Multigroup = Merkle.StringKey (* FIXME *)
-
 module Make (S : Abstract.Storage.STORAGE) = struct
   (* Branch has a name, a set of multigroups, and a backlink to the previous state
      multigroup has a name and a set of schemas
@@ -10,13 +8,14 @@ module Make (S : Abstract.Storage.STORAGE) = struct
 
   module SI = Storage.Make (S)
 
-  module MultigroupM = Merkle.Interface (S) (Merkle.StringKey) (Multigroup)
-  module MMDirectory = Prototype.Directory.OfTree (S) (Merkle.StringKey) (Multigroup)
+  module M = Multigroup.Make (S)
+  module MultigroupM = Merkle.Interface (S) (Merkle.StringKey) (M)
+  module MMDirectory = Prototype.Directory.OfTree (S) (Merkle.StringKey) (M)
 
   module Error = struct
     open Concepts.Condition
 
-    let incomplete_branch addr = condition "incomplete-branch" "A stored branch is missing part of it's expected structure. Is your storage corrupted?"
+    let incomplete_branch addr = condition "incomplete-branch" "A stored branch is missing part of its expected structure. Is your storage corrupted?"
                                    ("address" |=| Concepts.Value.String (Concepts.Hash.to_hum_string addr))
   end
 
@@ -65,14 +64,14 @@ module Make (S : Abstract.Storage.STORAGE) = struct
 
     val storage : S.connection = storage
     val branch : t = value
-    val node : MultigroupM.node = node (* FIXME: can we not place this inside `t`? *)
+    val node = node (* FIXME: can we not place this inside `t`? *)
 
     method protocols : Protocols.Handle.protocol list =
       [ Prototype.Directory.of_properties
-          [ "multigroups", Prototype.mixture
+          [ "multigroup", Prototype.mixture
                             [ MMDirectory.make
                                 ~storage ~node
-                                ~constructor:(fun _e -> failwith "TODO") ] ] ]
+                                ~constructor:(M.wrap storage) ] ] ]
 
     method hash =
       Representation.to_blob branch
@@ -83,7 +82,7 @@ module Make (S : Abstract.Storage.STORAGE) = struct
     let open Utilities.Result in
     let* data = SI.get_req tx (S.Hash addr) in
     let* branch = Representation.of_blob data in
-    let* node = MultigroupM.find tx branch.multigroups |> fmap (Option.to_result ~none:(Error.incomplete_branch addr)) in
+    let* node = MultigroupM.find tx branch.multigroups |> fmap (Option.to_result ~none:(Error.incomplete_branch branch.multigroups)) in
     Ok (new branch conn branch node |> Protocols.Handle.make)
 
   let make conn =

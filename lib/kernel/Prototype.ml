@@ -25,7 +25,9 @@ module Directory = struct
         object
           method list = SI.with_transaction storage (Fun.flip Interface.keys node)
           method find k = SI.with_transaction storage (fun tx -> Interface.lookup tx k node)
-                          |> Result.map (Option.map constructor)
+                          |> Utilities.Result.fmap (function
+                                 | None -> Ok None
+                                 | Some x -> constructor x |> Result.map (Option.some))
         end
   end
 end
