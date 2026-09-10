@@ -1,8 +1,7 @@
 module Make (S : Abstract.Storage.STORAGE) = struct
   module SI = Storage.Make (S)
 
-  (* module R = SubstantialRelation.Make (S) *)
-  module R = Merkle.StringKey
+  module R = SubstantialRelation.Make (S)
   module RelationM = Merkle.Interface (S) (Merkle.StringKey) (R)
   module RMDirectory = Prototype.Directory.OfTree (S) (Merkle.StringKey) (R)
 
@@ -51,7 +50,7 @@ module Make (S : Abstract.Storage.STORAGE) = struct
           [ "relation", Prototype.mixture
                           [ RMDirectory.make
                               ~storage ~node
-                              ~constructor:(fun _e -> failwith "TODO") ] ] ]
+                              ~constructor:(R.wrap storage) ] ] ]
 
     method hash =
       Representation.to_blob multigroup

@@ -78,6 +78,9 @@ module Make (S : Abstract.Storage.STORAGE) = struct
       Ok {heading; predicate; local_constraints; tuples; indexes}
   end
 
+  let encode = Representation.to_blob
+  let decode = Representation.of_blob
+
   let heading {heading; _} = heading
   let predicate {predicate; _} = predicate
   let local_constraints {local_constraints; _} = local_constraints
@@ -133,10 +136,11 @@ module Make (S : Abstract.Storage.STORAGE) = struct
     let* data = SI.get_req tx (S.Hash addr) in
     Representation.of_blob data
 
+  let wrap conn relation =
+    new relation conn relation |> Protocols.Handle.make |> Result.ok
+
   let load tx conn addr =
-    let open Utilities.Result in
-    let* relation = load_value tx addr in
-    Ok (new relation conn relation |> Protocols.Handle.make)
+    load_value tx addr |> Utilities.Result.fmap (wrap conn)
 
   let assert_tuple tx relation tuple =
     let open Utilities.Result in
