@@ -83,12 +83,12 @@ C. Neither evaluator however knows the other's representation. The
 caller must establish that the callee's contract meets its needs,
 obviously.
 
-* This slice
-Registration is in-process OCaml: an evaluator is an object supplied
-by an OCaml client, as =Relation= and =Schematics= are today. A
-foreign registration path is a later concern and is not designed for
-here.
+* Registration
+Registration is made by the client, and in the case of builtins, 
+automatically at initialization, just as =Relation= and =Schematics=, 
+for example. A foreign registration path is a later concern and is not
+designed for here.
 
-Only =Protocols.Cursor= exists as a result protocol. Successor state,
-completion, plan persistence, and cross-evaluator optimization are
-absent by intention.
+Only =Protocols.Cursor= exists as a result protocol (at least for now), 
+so a successor state, completion, plan persistence, and cross-evaluator 
+optimizations are absent by design.
